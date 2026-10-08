@@ -146,6 +146,13 @@ func (d *Daemon) Handler() http.Handler {
 		d.Errors.Add("app", level, studio, where, msg, e)
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// what the preflight found missing: the app says it when it opens
+	mux.HandleFunc("GET /v1/health", func(w http.ResponseWriter, r *http.Request) {
+		d.mu.Lock()
+		problems := append([]string{}, d.Problems...)
+		d.mu.Unlock()
+		writeJSON(w, 200, map[string]any{"ok": len(problems) == 0, "problems": problems})
+	})
 	mux.HandleFunc("GET /v1/log", func(w http.ResponseWriter, r *http.Request) {
 		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
 		if n <= 0 || n > 1000 {

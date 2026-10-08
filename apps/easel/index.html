@@ -1631,6 +1631,12 @@ window.addEventListener("message", e => {
   try { await loadStudios(); bootLoaded = true; }
   catch (e) { setStatus("The Easel daemon isn’t answering: " + e.message, true); renderList(); showStudio(); }
   openStream();
+  // what the daemon found missing when it started (FFmpeg, the replay easel,
+  // node, claude): said now, not after a long painting fails at its replay
+  try {
+    const h = await api("/health");
+    if (h && h.problems && h.problems.length) alertBox("Easel isn’t fully set up.", h.problems.join("\n\n"));
+  } catch (e) {}
 })();
 </script>
 </body>

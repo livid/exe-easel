@@ -44,6 +44,9 @@ type Daemon struct {
 	hub *Hub
 
 	Errors *ErrLog // <repo>/logs/error.log
+
+	// Problems: what the preflight found missing (preflight.go)
+	Problems []string
 }
 
 func NewDaemon(repo, studios string) *Daemon {

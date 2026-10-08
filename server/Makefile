@@ -18,7 +18,7 @@ PLIST     := $(HOME)/Library/LaunchAgents/$(LABEL).plist
 FILL       = sed -e 's|@BIN@|$(BIN)|g' -e 's|@REPO@|$(REPO)|g' -e 's|@NODE@|$(NODE)|g' \
                -e 's|@CLAUDE@|$(CLAUDE)|g' -e 's|@PATH@|$(SVCPATH)|g' -e 's|@LABEL@|$(LABEL)|g'
 
-.PHONY: build test install restart uninstall check
+.PHONY: build test install restart uninstall check engine
 
 build:
 	$(GO) build -o exe-easel .
@@ -26,13 +26,25 @@ build:
 test:
 	$(GO) test ./...
 
+# the preflight: everything Easel needs, said before anything is installed
 check:
-	@test -n "$(NODE)" || { echo "node not found on PATH (Node 24)"; exit 1; }
-	@test -x "$(CLAUDE)" || { echo "claude not found: install Claude Code and sign in"; exit 1; }
-	@test -x "$(REPO)/engine/scripts/export_r16_studio" || { echo "engine/ is empty: git submodule update --init"; exit 1; }
+	@ok=1; \
+	test -x "$(REPO)/engine/scripts/export_r16_studio" || { echo "missing: engine/ is empty: git submodule update --init"; ok=0; }; \
+	test -n "$(NODE)" && "$(NODE)" -e 'const [a,b]=process.versions.node.split(".").map(Number); process.exit(a>23||(a==23&&b>=6)?0:1)' \
+	  || { echo "missing: Node 23.6 or newer (node on PATH)"; ok=0; }; \
+	test -x "$(CLAUDE)" || { echo "missing: Claude Code (claude on PATH, signed in)"; ok=0; }; \
+	command -v cargo >/dev/null && cargo --version | awk '{split($$2,v,"."); exit !(v[1]>1 || v[2]>=84)}' \
+	  || { echo "missing: Rust 1.84 or newer (rustup update): the engine's Cargo.toml uses resolver 3"; ok=0; }; \
+	command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
+	  || { echo "missing: FFmpeg with ffprobe and libx264, for the replays (brew install ffmpeg / apt install ffmpeg)"; ok=0; }; \
+	test $$ok = 1 && echo "preflight: everything Easel needs is here"
+
+# the engine's replay build, which finishing, replays and the export use
+engine: check
+	cd $(REPO)/engine && cargo build --release -p easel
 
 ifeq ($(OS),Darwin)
-install: check build
+install: engine build
 	mkdir -p $(HOME)/Library/LaunchAgents $(REPO)/logs
 	$(FILL) exe-easel.plist.in > $(PLIST)
 	-launchctl bootout gui/$$(id -u)/$(LABEL) 2>/dev/null
@@ -45,7 +57,7 @@ uninstall:
 	-launchctl bootout gui/$$(id -u)/$(LABEL)
 	rm -f $(PLIST)
 else
-install: check build
+install: engine build
 	mkdir -p $(dir $(UNIT))
 	$(FILL) exe-easel.service.in > $(UNIT)
 	$(SYSTEMCTL) daemon-reload

@@ -20,19 +20,24 @@ dries on a clock, and layers combine by Kubelka–Munk optics. It is the
 
 ## Setting it up
 
-You need exe, Go, Rust (rustup), Node 24 and Claude Code signed in.
+You need [exe](https://github.com/livid/exe), Claude Code (signed in), Go 1.26
+or newer, Rust 1.84 or newer (`rustup update`), Node 23.6 or newer, and FFmpeg
+with `ffprobe` and libx264 for the replays (`brew install ffmpeg`, or
+`apt install ffmpeg`). Linux and macOS both work.
 
 ```sh
-git clone --recurse-submodules https://github.com/livid/exe-easel /www/exe-easel
-cd /www/exe-easel/engine && cargo build --release -p easel   # the replay build: finishing, replays
-cd ../server && make install                                  # exe-easel on 127.0.0.1:7794, a user unit
+git clone --recurse-submodules --shallow-submodules https://github.com/livid/exe-easel
+cd exe-easel/server
+make check     # says what is missing, before anything is installed
+make install   # builds the engine's replay easel and the daemon, and runs it on
+               # 127.0.0.1:7794 as a systemd user unit (Linux) or a launchd agent (macOS)
 ```
 
 Then tell exe about it, in `~/.exe/config.json` or with `PUT /v1/config`:
 
 ```json
 "services": { "easel": "http://127.0.0.1:7794" },
-"apps_dirs": [ "…", "/www/exe-easel/apps" ]
+"apps_dirs": [ "…", "/path/to/exe-easel/apps" ]
 ```
 
 Easel shows on the desktop. **New Studio…** makes a studio (an easel, a box
@@ -42,9 +47,12 @@ its replay filmed without anyone asking.
 
 ## Notes
 
-- Painters run as transient systemd user units (`exe-easel-<studio>`) and
-  outlive the daemon. Studios live in `studios/`; nothing there is committed.
+- Painters run in transient systemd user units (`exe-easel-<studio>`) on Linux
+  and in sessions of their own on macOS, and outlive the daemon. Studios live in `studios/`; nothing there is committed.
 - What goes wrong, in the app or the daemon, is written to `logs/error.log`.
+  When the daemon starts it checks for FFmpeg, the replay easel, node and
+  claude; anything missing is in that log, at `GET /v1/health`, and in an
+  alert when the Easel window opens. `make uninstall` removes the service.
 - claude-paint's README asks that its benchmark data never appear in training
   corpora; this repository carries none of it (the submodule points at the
   original).

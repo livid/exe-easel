@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -467,4 +468,31 @@ func settle(t *testing.T, st *studioState) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("the studio never settled")
+}
+
+// The preflight says what is missing, and /v1/health hands it to the app.
+func TestPreflight(t *testing.T) {
+	d, srv, _, _ := newTestDaemon(t)
+	d.Node, d.Claude = "/nonexistent/node", "/nonexistent/claude"
+	d.Preflight()
+	code, m := call(t, "GET", srv.URL+"/v1/health", nil)
+	problems, _ := m["problems"].([]any)
+	if code != 200 || m["ok"] != false || len(problems) < 3 {
+		t.Fatalf("health %d %v", code, m)
+	}
+	joined := fmt.Sprint(problems)
+	for _, want := range []string{"replay easel isn't built", "engine submodule is empty", "node isn't found", "claude isn't found"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("missing %q in %s", want, joined)
+		}
+	}
+	var warned int
+	for _, e := range d.Errors.Tail(50) {
+		if strings.Contains(string(e), `"preflight"`) {
+			warned++
+		}
+	}
+	if warned != len(problems) {
+		t.Fatalf("the error log has %d preflight lines, want %d", warned, len(problems))
+	}
 }

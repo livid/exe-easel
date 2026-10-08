@@ -63,6 +63,7 @@ func main() {
 			d.ExeToken = c.APIToken
 		}
 	}
+	d.Preflight()
 	d.Adopt()
 	go d.Poll(make(chan struct{}))
 	srv := &http.Server{Addr: *listen, Handler: d.Handler(), ReadHeaderTimeout: 10 * time.Second}
