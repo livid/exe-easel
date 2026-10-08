@@ -68,6 +68,7 @@ trimmed; "" when that leaves more than 120 characters or nothing.
 | `painting` | a `harness/claude/paint` for this studio is running (found in /proc, whoever started it) |
 | `stopping` | stop was asked; the painter has not ended yet |
 | `finishing`, `replaying` | a finish or clip job runs |
+| `drawing` | a views job runs (always automatic: see The views) |
 | `failed` | the export failed (`error` says why); only DELETE helps |
 
 `painting` wins over a job; jobs refuse to start while painting.
@@ -156,6 +157,22 @@ trimmed; "" when that leaves more than 120 characters or nothing.
   survey) on a closed easel whose `live.png` is newer than the log answers at once
   with that picture: the canvas exactly as the easel saved it when it closed.
 - `POST /v1/studios/{name}/close` → 204: closes an easel nobody paints at.
+
+## The views
+
+`out/app/views/` keeps the finished canvas as each of `look`'s views shows it
+(`normal`, `value`, `squint`, `mirror`, `relief`, `gallery`) and the palette
+board, with `log.stamp`: the stamp of the log they were drawn from. They come
+from `easel run --views <dir>` (the replay build; `scripts/replay_clip --views`
+passes it on), so every clip draws them from the replay it makes anyway; a
+painting whose views are missing or older than its log gets a `views` job of
+its own (heal.go). A look that is one of them whole (no crop, size, light,
+grid, scratch or survey) is answered from them while the stamp matches the log.
+When it doesn't and the easel is closed, the look answers `{"opening":
+"Drawing the views from a replay of the painting: chunk 12 of 55…"}` — waiting
+on the heal already at it, or starting a `views` job then — instead of opening
+the easel, whose open replays the log as long and keeps nothing; an open easel
+answers the look itself.
 
 ## The error log
 

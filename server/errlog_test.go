@@ -84,7 +84,7 @@ func TestErrorLogFromAFailedOpen(t *testing.T) {
 // Canvas Now on a closed easel is the canvas the easel saved as it
 // closed: no reopen, no replay of the log.
 func TestCanvasNowFromTheSave(t *testing.T) {
-	_, srv, studios, _ := newTestDaemon(t)
+	d, srv, studios, _ := newTestDaemon(t)
 	dir := makeStudio(t, studios, "closed")
 	logPath := filepath.Join(dir, "paintings/lua/painting.lua")
 	os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
@@ -99,9 +99,10 @@ func TestCanvasNowFromTheSave(t *testing.T) {
 	if exists(filepath.Join(dir, "opens.log")) {
 		t.Fatal("the easel was opened for a look the save could answer")
 	}
-	// a mode is the easel's to draw: that one opens it
+	// a mode without kept views is drawn from a replay (views.go), not an open easel
 	_, m = call(t, "POST", srv.URL+"/v1/studios/closed/look", map[string]any{"mode": "value"})
-	if _, opening := m["opening"]; !opening {
+	if words, _ := m["opening"].(string); !strings.Contains(words, "Drawing the views") {
 		t.Fatalf("a value look: %v", m)
 	}
+	d.state("closed").yieldAuto()
 }

@@ -495,10 +495,13 @@ func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) erro
 		frames := filepath.Join(st.dir, "out/app/frames")
 		os.RemoveAll(frames)
 		os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
+		// the same replay draws the views (views.go), stamped with the log as it is now
+		stamp := logStamp(st.dir)
+		os.RemoveAll(viewsNewDir(st))
 		args := func(length float64, more ...string) []string {
 			return append([]string{filepath.Join(st.dir, "paintings/lua/painting.lua"), filepath.Join(st.dir, "out/replay.mp4"),
 				"--length", fmt.Sprint(length), "--sheet", filepath.Join(st.dir, "out/replay-sheet.jpg"),
-				"--frames-dir", frames}, more...)
+				"--frames-dir", frames, "--views", viewsNewDir(st)}, more...)
 		}
 		err := d.script(ctx, st, "clip.log", "replay_clip", args(r.Length)...)
 		// a short painting can't fill the length asked: the script names the
@@ -507,6 +510,10 @@ func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) erro
 			if most, perr := strconv.ParseFloat(m[1], 64); perr == nil && most > 0 && most < r.Length {
 				err = d.script(ctx, st, "clip.log", "replay_clip", args(most, "--reuse")...)
 			}
+		}
+		// a movie too short to cut still drew its views: keep them either way
+		if exists(filepath.Join(viewsNewDir(st), "palette.png")) {
+			keepViews(st, stamp)
 		}
 		return err
 	}

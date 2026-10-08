@@ -337,6 +337,8 @@ func (st *studioState) compute(painting bool) Studio {
 		o.State = "finishing"
 	case st.job != nil && st.job.Kind == "clip":
 		o.State = "replaying"
+	case st.job != nil && st.job.Kind == "views":
+		o.State = "drawing"
 	default:
 		o.State = "idle"
 	}

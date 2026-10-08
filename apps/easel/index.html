@@ -622,7 +622,10 @@ let profiles = [];
 let tab = "canvas";
 let hidden = false;
 const cur = () => studios.find(s => s.name === sel) || null;
-const busy = s => !!s && ["painting", "stopping", "preparing", "finishing", "replaying"].includes(s.state);
+// what the daemon does by itself (job.auto: a heal) steps aside for anything
+// asked, so it never makes the studio busy here
+const busy = s => !!s && (["painting", "stopping", "preparing"].includes(s.state) ||
+  (["finishing", "replaying", "drawing"].includes(s.state) && !(s.job && s.job.auto)));
 const modelLabel = id => (models.find(m => m.id === id) || {}).label || id || "";
 
 // what each pane holds, so a change reloads only what is shown
@@ -639,6 +642,7 @@ function stateWords(s) {
     case "stopping": return "Stopping…";
     case "finishing": return "Varnishing…";
     case "replaying": return "Making the replay…";
+    case "drawing": return "Drawing its views…";
     case "failed": return "Failed";
   }
   if (!s.chunks) return s.started ? "Stopped before painting" : "Not started";

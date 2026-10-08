@@ -15,6 +15,8 @@ package main
 //     finished with (out/app/finish.json).
 //   - The replay is made when there is none, or the log has moved on past
 //     it, at the length last asked for (out/app/clip.json, else 75 s).
+//   - The views (views.go) come with the replay; a painting whose views are
+//     missing or older than its log gets them drawn by a replay of their own.
 //
 // A heal that fails is written to out/app/heal.json with the log's stamp,
 // and not tried again until the log changes: a painting too short to film
@@ -103,6 +105,9 @@ func healNeed(dir string, quiet time.Duration, now time.Time) string {
 			return "clip"
 		}
 	}
+	if failed["views"].Log != stamp && !viewsFresh(dir) {
+		return "views"
+	}
 	return ""
 }
 
@@ -176,6 +181,8 @@ func (d *Daemon) heal() {
 		case "clip":
 			length := savedClipLength(st.dir)
 			err = d.runJob(st, "clip", true, func(ctx context.Context) error { return d.clip(ctx, st, length) })
+		case "views":
+			err = d.runJob(st, "views", true, func(ctx context.Context) error { return d.renderViews(ctx, st) })
 		default:
 			continue
 		}

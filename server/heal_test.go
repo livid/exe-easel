@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,8 +41,13 @@ func TestHealNeed(t *testing.T) {
 			t.Fatalf("with the picture: got %q, want clip", got)
 		}
 		touch(t, filepath.Join(dir, "out/replay.mp4"), now)
+		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
+			t.Fatalf("with both: got %q, want views", got)
+		}
+		touch(t, filepath.Join(dir, "out/app/views/palette.png"), now)
+		os.WriteFile(filepath.Join(dir, "out/app/views", viewsStamp), []byte(logStamp(dir)+"\n"), 0o644)
 		if got := healNeed(dir, 2*time.Minute, now); got != "" {
-			t.Fatalf("with both: got %q, want nothing", got)
+			t.Fatalf("with all three: got %q, want nothing", got)
 		}
 	})
 	t.Run("a painter stopped, or a hand: the replay only", func(t *testing.T) {
@@ -76,8 +82,12 @@ func TestHealNeed(t *testing.T) {
 	t.Run("a failure waits for the log to change", func(t *testing.T) {
 		dir := healStudio(t)
 		healFailed(dir, "clip", errors.New("too short to film"))
+		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
+			t.Fatalf("got %q, want the views after the clip failed on this log", got)
+		}
+		healFailed(dir, "views", errors.New("no"))
 		if got := healNeed(dir, 2*time.Minute, now); got != "" {
-			t.Fatalf("got %q, want nothing after a failure on this log", got)
+			t.Fatalf("got %q, want nothing after both failed on this log", got)
 		}
 		logPath := filepath.Join(dir, "paintings/lua/painting.lua")
 		os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n--@ chunk 2\nprint(1)\n--@ chunk 3\nprint(2)\n"), 0o644)
@@ -139,4 +149,75 @@ func TestUserJobDoesNotYield(t *testing.T) {
 	if !running {
 		t.Fatal("a job the user asked for must not be cancelled")
 	}
+}
+
+// The kept views answer a look while they are of the log as it is.
+func TestKeptViews(t *testing.T) {
+	d, srv, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "v")
+	logPath := filepath.Join(dir, "paintings/lua/painting.lua")
+	os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	st := d.state("v")
+	nd := viewsNewDir(st)
+	os.MkdirAll(nd, 0o755)
+	for _, f := range []string{"normal", "value", "squint", "mirror", "relief", "gallery"} {
+		writePNG(t, filepath.Join(nd, f+".png"), 50, 30)
+	}
+	writePNG(t, filepath.Join(nd, "palette.png"), 50, 12)
+	if err := keepViews(st, logStamp(dir)); err != nil {
+		t.Fatal(err)
+	}
+	code, m := call(t, "POST", srv.URL+"/v1/studios/v/look", map[string]any{"palette": true})
+	if code != 200 || m["h"].(float64) != 12 || exists(filepath.Join(dir, "opens.log")) {
+		t.Fatalf("palette from the kept views: %d %v", code, m)
+	}
+	code, m = call(t, "POST", srv.URL+"/v1/studios/v/look", map[string]any{"mode": "relief"})
+	if code != 200 || m["w"].(float64) != 50 {
+		t.Fatalf("relief: %d %v", code, m)
+	}
+	// a crop is the easel's to draw
+	_, m = call(t, "POST", srv.URL+"/v1/studios/v/look", map[string]any{"mode": "relief", "crop": "0,0,100,100"})
+	if _, opening := m["opening"]; !opening {
+		t.Fatalf("a crop should open the easel: %v", m)
+	}
+	// a log that moved on leaves the views stale
+	os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n--@ chunk 2\nprint(1)\n"), 0o644)
+	if viewsFresh(dir) {
+		t.Fatal("views of an older log read fresh")
+	}
+}
+
+// A view asked for on a closed easel without kept views starts drawing them
+// (an automatic job) rather than open the easel, and a second ask waits on
+// that job instead of cancelling it.
+func TestViewStartsTheViewsJob(t *testing.T) {
+	d, srv, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "w")
+	os.WriteFile(filepath.Join(dir, "paintings/lua/painting.lua"), []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	st := d.state("w")
+	// hold the job: the test repo has no cargo project, so stand in for it
+	release := make(chan struct{})
+	started := make(chan struct{}, 1)
+	if err := d.runJob(st, "views", true, func(ctx context.Context) error {
+		started <- struct{}{}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return ctx.Err()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	<-started
+	code, m := call(t, "POST", srv.URL+"/v1/studios/w/look", map[string]any{"palette": true})
+	if words, _ := m["opening"].(string); code != 200 || !strings.Contains(words, "Drawing the views") {
+		t.Fatalf("a palette while the views are drawn: %d %v", code, m)
+	}
+	st.mu.Lock()
+	still := st.job != nil
+	st.mu.Unlock()
+	if !still || exists(filepath.Join(dir, "opens.log")) {
+		t.Fatal("the look cancelled the views job or opened the easel")
+	}
+	close(release)
 }
