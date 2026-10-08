@@ -53,10 +53,11 @@ counts its assistant lines, each message once (by id, its largest figures).
 Claude Code writes those lines before a message ends, so a live run's output
 count is low until its result arrives.
 
-Title: the first non-empty line of `reply.txt`, with Markdown emphasis
-(`**`, `*`, `_`), a leading `#`s and a leading `Title:` / `Title —` removed and
-surrounding quotes (“” "" ‘’ '' 《》 「」) trimmed; "" when that leaves more than 120
-characters or nothing.
+Title: a name in 《》 or 「」 in the first paragraph of `reply.txt` (the name
+alone, without its brackets or an English gloss after it); otherwise the first
+non-empty line, with Markdown emphasis (`**`, `*`, `_`), leading `#`s and a
+leading `Title:` / `Title —` removed and surrounding quotes (“” "" ‘’ 《》 「」 '')
+trimmed; "" when that leaves more than 120 characters or nothing.
 
 ### States
 

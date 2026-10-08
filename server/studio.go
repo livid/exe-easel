@@ -186,8 +186,24 @@ var (
 	emphRe        = regexp.MustCompile(`\*\*|\*|__|(^|\s)_|_(\s|$)`)
 )
 
-// titleFrom: the first non-empty line of a reply, cleaned (API.md, Title).
+// workNameRe: a work's name in the reply's first paragraph, between the
+// brackets Chinese and Japanese give titles: 《冰箱的光》, 「石下的眼睛」.
+var workNameRe = regexp.MustCompile(`《([^《》\n]{1,60})》|「([^「」\n]{1,60})」`)
+
+// titleFrom: the name the painter gave its picture (API.md, Title). A name
+// in 《》 or 「」 in the first paragraph wins: a painter that answers "It's
+// called 《手指画的星》" in a sentence, or puts an English gloss after it,
+// still gets the name alone. Otherwise the first non-empty line, cleaned.
 func titleFrom(reply string) string {
+	first := strings.TrimSpace(reply)
+	if i := strings.Index(first, "\n\n"); i >= 0 {
+		first = first[:i]
+	}
+	if m := workNameRe.FindStringSubmatch(first); m != nil {
+		if name := strings.TrimSpace(m[1] + m[2]); name != "" {
+			return name
+		}
+	}
 	for _, ln := range strings.Split(reply, "\n") {
 		t := strings.TrimSpace(ln)
 		if t == "" {
