@@ -37,24 +37,24 @@ func TestHealNeed(t *testing.T) {
 			t.Fatalf("got %q, want finish", got)
 		}
 		touch(t, filepath.Join(dir, "out/final.png"), now)
-		if got := healNeed(dir, 2*time.Minute, now); got != "clip" {
-			t.Fatalf("with the picture: got %q, want clip", got)
-		}
-		touch(t, filepath.Join(dir, "out/replay.mp4"), now)
 		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
-			t.Fatalf("with both: got %q, want views", got)
+			t.Fatalf("with the picture: got %q, want views", got)
 		}
 		touch(t, filepath.Join(dir, "out/app/views/palette.png"), now)
 		os.WriteFile(filepath.Join(dir, "out/app/views", viewsStamp), []byte(logStamp(dir)+"\n"), 0o644)
+		if got := healNeed(dir, 2*time.Minute, now); got != "clip" {
+			t.Fatalf("with the picture and views: got %q, want clip", got)
+		}
+		touch(t, filepath.Join(dir, "out/replay.mp4"), now)
 		if got := healNeed(dir, 2*time.Minute, now); got != "" {
 			t.Fatalf("with all three: got %q, want nothing", got)
 		}
 	})
-	t.Run("a painter stopped, or a hand: the replay only", func(t *testing.T) {
+	t.Run("a painter stopped, or a hand: views and the replay, no varnish", func(t *testing.T) {
 		dir := healStudio(t)
 		os.WriteFile(filepath.Join(dir, "out/claude/runs.log"), []byte("x start\nx end status=130\n"), 0o644)
-		if got := healNeed(dir, 2*time.Minute, now); got != "clip" {
-			t.Fatalf("got %q, want clip", got)
+		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
+			t.Fatalf("got %q, want views", got)
 		}
 	})
 	t.Run("the log moved on past both", func(t *testing.T) {
@@ -81,11 +81,11 @@ func TestHealNeed(t *testing.T) {
 	})
 	t.Run("a failure waits for the log to change", func(t *testing.T) {
 		dir := healStudio(t)
-		healFailed(dir, "clip", errors.New("too short to film"))
-		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
-			t.Fatalf("got %q, want the views after the clip failed on this log", got)
+		healFailed(dir, "views", errors.New("no easel"))
+		if got := healNeed(dir, 2*time.Minute, now); got != "clip" {
+			t.Fatalf("got %q, want the clip after the views failed on this log", got)
 		}
-		healFailed(dir, "views", errors.New("no"))
+		healFailed(dir, "clip", errors.New("too short to film"))
 		if got := healNeed(dir, 2*time.Minute, now); got != "" {
 			t.Fatalf("got %q, want nothing after both failed on this log", got)
 		}
@@ -93,8 +93,8 @@ func TestHealNeed(t *testing.T) {
 		os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n--@ chunk 2\nprint(1)\n--@ chunk 3\nprint(2)\n"), 0o644)
 		old := now.Add(-time.Hour)
 		os.Chtimes(logPath, old, old)
-		if got := healNeed(dir, 2*time.Minute, now); got != "clip" {
-			t.Fatalf("got %q, want clip once the log changed", got)
+		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
+			t.Fatalf("got %q, want views once the log changed", got)
 		}
 	})
 }
@@ -222,21 +222,34 @@ func TestViewStartsTheViewsJob(t *testing.T) {
 	close(release)
 }
 
-func TestLookIn(t *testing.T) {
-	dir := t.TempDir()
-	tool := filepath.Join(dir, "mytool")
-	os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755)
-	env := []string{"HOME=/x", "PATH=/nowhere:" + dir}
-	if got := lookIn(env, "mytool"); got != tool {
-		t.Fatalf("lookIn = %q, want %q", got, tool)
-	}
-	if got := lookIn(env, "/bin/sh"); got != "/bin/sh" {
-		t.Fatalf("a path stays: %q", got)
-	}
-	if got := lookIn(env, "nothere"); got != "nothere" {
-		t.Fatalf("not found stays: %q", got)
-	}
+func TestKilledIsNotAFailure(t *testing.T) {
 	if !killedRe.MatchString("some output\nsignal: terminated") || killedRe.MatchString("replay_clip: too short") {
 		t.Fatal("killedRe")
+	}
+}
+
+// The views job takes the studio's own easel's looks: it opens a closed
+// easel, keeps every view stamped with the log, and closes it again.
+func TestRenderViewsWithTheEasel(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "r")
+	os.WriteFile(filepath.Join(dir, "paintings/lua/painting.lua"), []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	st := d.state("r")
+	if err := d.renderViews(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !viewsFresh(dir) {
+		t.Fatal("the views aren't fresh after the job")
+	}
+	for _, v := range viewLooks {
+		if !exists(filepath.Join(dir, "out/app/views", v.file)) {
+			t.Fatalf("no %s", v.file)
+		}
+	}
+	if exists(filepath.Join(dir, ".open")) {
+		t.Fatal("the job left the easel it opened open")
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, "out/easel/painting")); len(entries) != 0 {
+		t.Fatalf("looks left in the painter's folder: %d", len(entries))
 	}
 }

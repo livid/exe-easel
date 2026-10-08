@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const fixtureStudio = "/www/exe-art/studios/haixing-2"
+const fixtureStudio = "/www/exe-easel/studios/haixing-2"
 
 func parseFixture(t *testing.T) *Session {
 	t.Helper()

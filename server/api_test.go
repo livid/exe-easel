@@ -406,17 +406,17 @@ func TestFenced(t *testing.T) {
 
 func TestProcIndex(t *testing.T) {
 	ps := []Proc{
-		{PID: 1, Comm: "bash", Argv: []string{"bash", "/www/exe-art/harness/claude/paint", "/www/exe-art/studios/a"}, Cwd: "/www/exe-art/studios/a"},
-		{PID: 2, Comm: "bash", Argv: []string{"/www/exe-art/harness/claude/paint", "studios/b"}, Cwd: "/www/exe-art"},
-		{PID: 3, Comm: "claude", Argv: []string{"claude", "-p"}, Cwd: "/www/exe-art/studios/a"},
-		{PID: 4, Comm: "timeout", Argv: []string{"timeout", "1", "claude"}, Cwd: "/www/exe-art/studios/a"},
-		{PID: 5, Comm: "vim", Argv: []string{"vim", "harness/claude/paint"}, Cwd: "/www/exe-art"},
+		{PID: 1, Comm: "bash", Argv: []string{"bash", "/www/exe-easel/harness/claude/paint", "/www/exe-easel/studios/a"}, Cwd: "/www/exe-easel/studios/a"},
+		{PID: 2, Comm: "bash", Argv: []string{"/www/exe-easel/harness/claude/paint", "studios/b"}, Cwd: "/www/exe-easel"},
+		{PID: 3, Comm: "claude", Argv: []string{"claude", "-p"}, Cwd: "/www/exe-easel/studios/a"},
+		{PID: 4, Comm: "timeout", Argv: []string{"timeout", "1", "claude"}, Cwd: "/www/exe-easel/studios/a"},
+		{PID: 5, Comm: "vim", Argv: []string{"vim", "harness/claude/paint"}, Cwd: "/www/exe-easel"},
 	}
 	ix := indexProcs(ps)
-	if ix.painters["/www/exe-art/studios/a"] != 1 || ix.painters["/www/exe-art/studios/b"] != 2 || len(ix.painters) != 2 {
+	if ix.painters["/www/exe-easel/studios/a"] != 1 || ix.painters["/www/exe-easel/studios/b"] != 2 || len(ix.painters) != 2 {
 		t.Fatalf("%v", ix.painters)
 	}
-	if ix.claudes["/www/exe-art/studios/a"] != 3 || ix.timeouts["/www/exe-art/studios/a"] != 4 {
+	if ix.claudes["/www/exe-easel/studios/a"] != 3 || ix.timeouts["/www/exe-easel/studios/a"] != 4 {
 		t.Fatalf("%v %v", ix.claudes, ix.timeouts)
 	}
 }

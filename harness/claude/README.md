@@ -1,18 +1,18 @@
 # Claude Code painter harness
 
-The pi harness (`../painter`) run with Claude Code instead: same system prompt,
+claude-paint's pi harness (`engine/harness/painter`) run with Claude Code instead: same system prompt,
 same tools, same replies, nothing else from the machine.
 
 | file | what it is |
 |---|---|
-| `easel-mcp.ts` | stdio MCP server (no dependencies; Node 24 runs the TypeScript as is) serving `paint`, `look`, `note`, `status`, `log` and a studio-fenced `read`. It calls `../painter/easel-client.ts` and `../painter/journal.ts` unchanged, so the easel's words, the hidden chunk and look counters and the `read` fence are pi's |
+| `easel-mcp.ts` | stdio MCP server (no dependencies; Node 24 runs the TypeScript as is) serving `paint`, `look`, `note`, `status`, `log` and a studio-fenced `read`. It calls `engine/harness/painter/easel-client.ts` and `journal.ts` unchanged, so the easel's words, the hidden chunk and look counters and the `read` fence are pi's |
 | `paint` | runs one painter: `harness/claude/paint <studio> [message]` |
 
 ## What the painter gets
 
 `paint` launches `claude -p` from the studio with:
 
-- `--system-prompt` = `../painter/system_prompt.md` (replaces Claude Code's own);
+- `--system-prompt` = `engine/harness/painter/system_prompt.md` (replaces Claude Code's own);
 - `--tools ""` and `--allowedTools mcp__easel__…`: no Bash, Read, Edit, web or
   subagents, only the easel's six tools;
 - `--setting-sources ""` and `--strict-mcp-config`: no user or project settings,

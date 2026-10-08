@@ -128,9 +128,10 @@ func (d *Daemon) Create(name, profile, brief string) (*studioState, error) {
 		return nil, err
 	}
 	go func() {
-		cmd := exec.Command(filepath.Join(d.Repo, "scripts/export_r16_studio"), profile, dir)
-		cmd.Dir = d.Repo
-		cmd.Env = d.env("R16_BRANCH=main", "TMPDIR="+os.TempDir())
+		// the engine as the submodule has it checked out: committed code only
+		cmd := exec.Command(filepath.Join(d.Engine, "scripts/export_r16_studio"), profile, dir)
+		cmd.Dir = d.Engine
+		cmd.Env = d.env("R16_BRANCH=HEAD", "TMPDIR="+os.TempDir())
 		out, err := cmd.CombinedOutput()
 		if err == nil {
 			err = os.WriteFile(filepath.Join(dir, "BRIEF.md"), []byte(brief), 0o644)
@@ -234,7 +235,7 @@ func (d *Daemon) Start(st *studioState, r StartReq) error {
 func (d *Daemon) launchPainter(name, studio string, env []string) error {
 	paint := filepath.Join(d.Repo, "harness/claude/paint")
 	os.MkdirAll(filepath.Join(studio, "out/claude"), 0o755)
-	args := []string{"--user", "--collect", "--quiet", "--unit", "exe-art-" + name, "--working-directory", studio}
+	args := []string{"--user", "--collect", "--quiet", "--unit", "exe-easel-" + name, "--working-directory", studio}
 	for _, e := range env {
 		args = append(args, "--setenv="+e)
 	}
@@ -246,7 +247,7 @@ func (d *Daemon) launchPainter(name, studio string, env []string) error {
 		return nil
 	}
 	// a unit of that name may linger: try a fresh name once
-	args[4] = fmt.Sprintf("exe-art-%s-%d", name, time.Now().Unix())
+	args[4] = fmt.Sprintf("exe-easel-%s-%d", name, time.Now().Unix())
 	cmd = exec.Command("systemd-run", args...)
 	cmd.Env = d.env()
 	if out2, err2 := cmd.CombinedOutput(); err2 == nil {
@@ -383,8 +384,8 @@ func (st *studioState) yieldAuto() {
 // (cargo, the replay easel, ffmpeg): it runs in a process group of its own.
 func (d *Daemon) script(ctx context.Context, st *studioState, logName string, name string, args ...string) error {
 	os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
-	cmd := exec.CommandContext(ctx, filepath.Join(d.Repo, "scripts", name), args...)
-	cmd.Dir = d.Repo
+	cmd := exec.CommandContext(ctx, filepath.Join(d.Engine, "scripts", name), args...)
+	cmd.Dir = d.Engine
 	cmd.Env = d.env("TMPDIR=" + os.TempDir())
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
@@ -498,13 +499,10 @@ func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) erro
 		frames := filepath.Join(st.dir, "out/app/frames")
 		os.RemoveAll(frames)
 		os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
-		// the same replay draws the views (views.go), stamped with the log as it is now
-		stamp := logStamp(st.dir)
-		os.RemoveAll(viewsNewDir(st))
 		args := func(length float64, more ...string) []string {
 			return append([]string{filepath.Join(st.dir, "paintings/lua/painting.lua"), filepath.Join(st.dir, "out/replay.mp4"),
 				"--length", fmt.Sprint(length), "--sheet", filepath.Join(st.dir, "out/replay-sheet.jpg"),
-				"--frames-dir", frames, "--views", viewsNewDir(st)}, more...)
+				"--frames-dir", frames}, more...)
 		}
 		err := d.script(ctx, st, "clip.log", "replay_clip", args(r.Length)...)
 		// a short painting can't fill the length asked: the script names the
@@ -513,10 +511,6 @@ func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) erro
 			if most, perr := strconv.ParseFloat(m[1], 64); perr == nil && most > 0 && most < r.Length {
 				err = d.script(ctx, st, "clip.log", "replay_clip", args(most, "--reuse")...)
 			}
-		}
-		// a movie too short to cut still drew its views: keep them either way
-		if exists(filepath.Join(viewsNewDir(st), "palette.png")) {
-			keepViews(st, stamp)
 		}
 		return err
 	}

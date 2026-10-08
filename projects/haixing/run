@@ -7,7 +7,7 @@
 #   projects/haixing/run start [N…]   start the painters (all six, or the ones named)
 #   projects/haixing/run status       each studio's runs.log, chunks and reply
 #   projects/haixing/run finish [N…]  dry, varnish and crack each painting
-#                                     (scripts/finish_painting) into out/final.png
+#                                     (engine/scripts/finish_painting) into out/final.png
 #
 # Studios live in studios/ (ignored by Git). PAINTER_* and RAYON_NUM_THREADS pass through
 # to harness/claude/paint; this script sets RAYON_NUM_THREADS=3 (six easels, 20 cores)
@@ -28,7 +28,7 @@ setup)
   for n in 1 2 3 4 5 6; do
     s="$studios/haixing-$n"
     [ -e "$s" ] && { echo "$s is there already" >&2; continue; }
-    R16_BRANCH=main TMPDIR="${TMPDIR:-/tmp}" "$repo/scripts/export_r16_studio" every "$s" | tail -1
+    R16_BRANCH=HEAD TMPDIR="${TMPDIR:-/tmp}" "$repo/engine/scripts/export_r16_studio" every "$s" | tail -1
     sed "s/{{N}}/$n/g" "$here/BRIEF.md.in" > "$s/BRIEF.md"
     cp "$here/story.md" "$s/notes/story.md"
     python3 -I - "$here/story.md" "$n" > "$s/notes/chapter.md" <<'EOF'
@@ -60,7 +60,7 @@ finish)
   shift
   for n in $(which_ones "$@"); do
     s="$studios/haixing-$n"
-    "$repo/scripts/finish_painting" "$s/paintings/lua/painting.lua" "$s/out/final.png"
+    "$repo/engine/scripts/finish_painting" "$s/paintings/lua/painting.lua" "$s/out/final.png"
   done ;;
 *) sed -n '2,13p' "$0" >&2; exit 2 ;;
 esac

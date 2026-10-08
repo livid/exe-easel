@@ -444,7 +444,13 @@ func (s *Session) result(c *pendingCall, text string, isErr bool) {
 			e["images"] = []string{}
 			break
 		}
-		e["said"] = strings.ReplaceAll(text, s.studio+string(filepath.Separator), "")
+		said := strings.Split(strings.ReplaceAll(text, s.studio+string(filepath.Separator), ""), "\n")
+		for i, ln := range said {
+			if m := pngRe.FindStringSubmatch(strings.TrimSpace(ln)); m != nil {
+				said[i] = strings.Replace(ln, m[1], s.rel(m[1]), 1)
+			}
+		}
+		e["said"] = strings.Join(said, "\n")
 		images := []string{}
 		w, h := 0, 0
 		for _, ln := range strings.Split(text, "\n") {
@@ -506,6 +512,11 @@ func (s *Session) rel(p string) string {
 	if filepath.IsAbs(p) {
 		if r, err := filepath.Rel(s.studio, p); err == nil && !strings.HasPrefix(r, "..") {
 			return filepath.ToSlash(r)
+		}
+		// a studio that moved (its old absolute path in the session): the
+		// looks are under out/easel/ wherever the studio stood
+		if i := strings.LastIndex(filepath.ToSlash(p), "/out/easel/"); i >= 0 {
+			return filepath.ToSlash(p)[i+1:]
 		}
 	}
 	return filepath.ToSlash(p)

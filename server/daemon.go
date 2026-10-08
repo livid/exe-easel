@@ -15,7 +15,8 @@ import (
 
 // Daemon holds the studios and everything the handlers share.
 type Daemon struct {
-	Repo     string // the exe-art checkout
+	Repo     string // the exe-easel checkout: harness/claude, templates, logs
+	Engine   string // claude-paint (the submodule): the easel, its scripts, the painter's notes
 	Studios  string // the studios folder
 	Claude   string // the claude binary
 	Node     string // node 24
@@ -43,7 +44,7 @@ type Daemon struct {
 }
 
 func NewDaemon(repo, studios string) *Daemon {
-	d := &Daemon{Repo: repo, Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute,
+	d := &Daemon{Repo: repo, Engine: filepath.Join(repo, "engine"), Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute,
 		Errors: NewErrLog(filepath.Join(repo, "logs/error.log"))}
 	d.Procs = scanProcs
 	d.Launch = d.launchPainter

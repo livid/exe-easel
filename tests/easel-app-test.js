@@ -1,5 +1,5 @@
 // The Easel app in headless Chromium, against exe (for /apps/easel/ and
-// /platinum/popup.css) with every /v1/svc/art/* call routed to the art
+// /platinum/popup.css) with every /v1/svc/easel/* call routed to the easel
 // daemon named by ART (default the live one, 127.0.0.1:7794).
 //
 //   node tests/easel-app-test.js <outdir> [--write]
@@ -35,7 +35,7 @@ const check = (ok, what) => { console.log((ok ? "ok   " : "FAIL ") + what); if (
 function relay(route) {
   const req = route.request();
   const u = new URL(req.url());
-  const p = u.pathname.replace(/^\/v1\/svc\/art/, "") || "/";
+  const p = u.pathname.replace(/^\/v1\/svc\/easel/, "") || "/";
   u.searchParams.delete("token");
   const method = req.method();
   if (!WRITE && method !== "GET" && method !== "HEAD") {
@@ -69,7 +69,7 @@ async function open(browser, dpr, mobile, w = 980, h = 640) {
   const errors = [];
   page.on("pageerror", e => errors.push(e.message));
   page.on("console", m => { if (m.type() === "error" && !/Failed to load resource|EventSource/.test(m.text())) errors.push(m.text()); });
-  await page.route("**/v1/svc/art/**", relay);
+  await page.route("**/v1/svc/easel/**", relay);
   const saved = [];
   await page.route("**/v1/workspace/**", route => {
     const r = route.request();

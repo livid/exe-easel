@@ -1,11 +1,11 @@
 /**
  * The painter's tools for Claude Code: the same five easel tools and studio `read` as
- * harness/painter/easel-tools.ts gives pi, served as a stdio MCP server (JSON-RPC, one
+ * engine/harness/painter/easel-tools.ts gives pi (claude-paint's own harness), served as a stdio MCP server (JSON-RPC, one
  * message a line; no SDK, no dependencies). Claude Code names them mcp__easel__paint and so on.
  *
  *   node harness/claude/easel-mcp.ts <studio>
  *
- * Each tool runs the studio's `bin/easel` through ../painter/easel-client.ts, so the replies,
+ * Each tool runs the studio's `bin/easel` through engine/harness/painter/easel-client.ts, so the replies,
  * hidden counters, renamed looks and the studio fence are pi's, word for word. A look comes
  * back as a JPEG of the PNG the easel wrote (quality 92, no chroma subsampling; the PNG stays
  * on disk for `read` and `compare`), shrunk to MAX_SIDE if it is longer (Anthropic refuses images
@@ -17,8 +17,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { atEasel, hideCounters, logReply, lookArgs, paintReply, renameLooks, statusReply, studioPath, surveyReply, tail, toolWords } from "../painter/easel-client.ts";
-import { reviseJournal } from "../painter/journal.ts";
+import { atEasel, hideCounters, logReply, lookArgs, paintReply, renameLooks, statusReply, studioPath, surveyReply, tail, toolWords } from "../../engine/harness/painter/easel-client.ts";
+import { reviseJournal } from "../../engine/harness/painter/journal.ts";
 
 const studio = resolve(process.argv[2] ?? process.cwd());
 if (!existsSync(resolve(studio, "bin", "easel"))) {

@@ -1,0 +1,14 @@
+[Unit]
+Description=exe-easel: the painters' studios, served for the exe desktop's Easel app
+After=network.target
+
+[Service]
+ExecStart=/www/exe-easel/server/exe-easel -listen 127.0.0.1:7794 -repo /www/exe-easel
+Restart=on-failure
+RestartSec=3
+# painters run in transient units of their own (exe-easel-<studio>); a job a
+# restart leaves behind is stopped by hand, never by the unit
+KillMode=process
+
+[Install]
+WantedBy=default.target

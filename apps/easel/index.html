@@ -529,13 +529,13 @@ const $$ = s => [...document.querySelectorAll(s)];
 const TOKEN = new URLSearchParams(location.search).get("token") || "";
 const MOBILE = new URLSearchParams(location.search).has("mobile");
 const APP = decodeURIComponent(location.pathname.split("/")[2] || "easel");
-const API = "/v1/svc/art/v1";
+const API = "/v1/svc/easel/v1";
 const NAME = /^[a-z0-9][a-z0-9-]{0,47}$/;
 const LS = k => "easel." + k;
 const lsGet = k => { try { return localStorage.getItem(LS(k)); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(LS(k), v); } catch (e) {} };
 
-// ---- the error log: what goes wrong here is written to exe-art's
+// ---- the error log: what goes wrong here is written to exe-easel's
 // logs/error.log through the daemon (POST /v1/log), with where it happened,
 // so it can be read and fixed later; the same error once in 10 s ----
 const reported = new Map();
@@ -1449,7 +1449,7 @@ $("#st-list").addEventListener("contextmenu", async e => {
     { label: "Finish…", run: () => finishSheet(s), dis: !can || !s.chunks },
     { label: "Replay…", run: () => clipSheet(s), dis: !can || !s.chunks },
     { label: "Save to Workspace", run: () => $("#b-save").click(), dis: !s.final && !s.latest },
-    { label: "Copy Folder Path", run: () => navigator.clipboard?.writeText("/www/exe-art/studios/" + s.name).then(() => setStatus("Copied the folder’s path."), () => {}) },
+    { label: "Copy Folder Path", run: () => navigator.clipboard?.writeText("/www/exe-easel/studios/" + s.name).then(() => setStatus("Copied the folder’s path."), () => {}) },
     "-",
     { label: "Move to Trash…", run: () => trashStudio(s), dis: busy(s) },
   ]);

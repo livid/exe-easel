@@ -1,13 +1,16 @@
-# exe-art daemon API
+# exe-easel daemon API
 
-`exe-art` (this folder, Go, stdlib only) serves the painters' studios to the exe
+`exe-easel` (this folder, Go, stdlib only) serves the painters' studios to the exe
 desktop's Easel app (`../apps/easel`). It listens on `127.0.0.1:7794`; exe relays
-`/v1/svc/art/<path>?<query>` to it (config.json `"services": {"art":
-"http://127.0.0.1:7794"}`), so the app calls `/v1/svc/art/v1/studios?token=…`.
+`/v1/svc/easel/<path>?<query>` to it (config.json `"services": {"easel":
+"http://127.0.0.1:7794"}`), so the app calls `/v1/svc/easel/v1/studios?token=…`.
+The simulator is the `engine` submodule (claude-paint, unmodified; `-engine`
+names another checkout): the daemon runs its `scripts/` (export, finish,
+replay) from there.
 JSON everywhere; errors are `{"error": "words"}` with a 4xx/5xx status.
 Times are epoch milliseconds. Paths inside a studio are relative to it, with `/`.
 
-A **studio** is a folder `<studios>/<name>` (default `/www/exe-art/studios`) holding
+A **studio** is a folder `<studios>/<name>` (default `/www/exe-easel/studios`) holding
 `bin/easel` and `BRIEF.md`, as `scripts/export_r16_studio` makes it plus
 `harness/claude/paint`'s `out/claude/` once a painter has run. Names are
 `^[a-z0-9][a-z0-9-]{0,47}$`. `studios/.trash/` holds deleted ones.
@@ -82,7 +85,7 @@ trimmed; "" when that leaves more than 120 characters or nothing.
   A comment line `: ping` every 20 s.
 - `POST /v1/studios` `{"name", "profile": "every", "brief": "…markdown…"}` →
   201 the studio (state `preparing`). Exports in the background with
-  `R16_BRANCH=main scripts/export_r16_studio <profile> <dir>`, then writes
+  `R16_BRANCH=HEAD engine/scripts/export_r16_studio <profile> <dir>` (the engine as checked out), then writes
   `BRIEF.md` (the brief given, or the template `templates/free.md` when empty).
   409 if the name is taken.
 - `GET /v1/profiles` → `{"profiles": [{"name": "every", "label": "Every tube"}, …]}`
@@ -113,15 +116,15 @@ trimmed; "" when that leaves more than 120 characters or nothing.
 - `POST /v1/studios/{name}/start` `{"model", "effort", "hours", "notify": bool}` →
   the studio (state `painting`). Runs `harness/claude/paint <studio>` with
   `PAINTER_MODEL`, `PAINTER_EFFORT`, `PAINTER_HOURS`, `RAYON_NUM_THREADS=3`, in a
-  transient systemd user unit `exe-art-<name>` (`systemd-run --user --collect`), so
-  a daemon restart leaves it painting (`exe-art-<name>-<unix>` if that name is
+  transient systemd user unit `exe-easel-<name>` (`systemd-run --user --collect`), so
+  a daemon restart leaves it painting (`exe-easel-<name>-<unix>` if that name is
   taken; `setsid` when systemd-run fails). `CLAUDE` and `NODE` name the binaries. A studio
   whose session stopped resumes it (`paint` does that by itself from
   `out/claude/session_id`). 409 while painting or a job runs.
 - `POST /v1/studios/{name}/stop` → the studio (state `stopping`): SIGINT to the
   studio's `claude` process; `paint` then writes the reply and closes the easel.
 - `POST /v1/studios/{name}/finish` `{"varnish": true, "coats": 0.4, "cracks": true,
-  "relief": false}` → the studio (state `finishing`). Runs `scripts/finish_painting
+  "relief": false}` → the studio (state `finishing`). Runs `engine/scripts/finish_painting
   paintings/lua/painting.lua out/final.png [--coats C] [--no-varnish] [--no-cracks]
   [--relief]`, then writes `out/final.jpg` (1600 px wide, quality 88).
   `"replay": L` (5..600 seconds; 0 or absent: none) films it as well, as the same
@@ -129,7 +132,7 @@ trimmed; "" when that leaves more than 120 characters or nothing.
   what `POST …/clip` with that length runs. 409 while painting or with no chunks.
   The options (without `replay`) are kept in `out/app/finish.json` for the heal.
 - `POST /v1/studios/{name}/clip` `{"length": 75}` → the studio (state `replaying`).
-  `scripts/replay_clip paintings/lua/painting.lua out/replay.mp4 --length L
+  `engine/scripts/replay_clip paintings/lua/painting.lua out/replay.mp4 --length L
   --sheet out/replay-sheet.jpg --frames-dir out/app/frames`. A painting too short
   for L (the script names the most it can run) is cut again at that length from
   the same frames (`--reuse`). 409 while painting or with no chunks. A failed
@@ -162,17 +165,18 @@ trimmed; "" when that leaves more than 120 characters or nothing.
 
 `out/app/views/` keeps the finished canvas as each of `look`'s views shows it
 (`normal`, `value`, `squint`, `mirror`, `relief`, `gallery`) and the palette
-board, with `log.stamp`: the stamp of the log they were drawn from. They come
-from `easel run --views <dir>` (the replay build; `scripts/replay_clip --views`
-passes it on), so every clip draws them from the replay it makes anyway; a
-painting whose views are missing or older than its log gets a `views` job of
-its own (heal.go). A look that is one of them whole (no crop, size, light,
-grid, scratch or survey) is answered from them while the stamp matches the log.
-When it doesn't and the easel is closed, the look answers `{"opening":
-"Drawing the views from a replay of the painting: chunk 12 of 55…"}` — waiting
-on the heal already at it, or starting a `views` job then — instead of opening
-the easel, whose open replays the log as long and keeps nothing; an open easel
-answers the look itself.
+board, with `log.stamp`: the stamp of the log they were drawn from. A `views`
+job (state `drawing`, always automatic: heal.go) takes them with the studio's
+own easel: it opens a closed easel (one replay of the log, the progress read
+from its `server.log`), looks in every mode and at the palette, keeps the
+looks, and closes the easel again if it opened it; cancelled while the easel
+is open, it leaves it open for whoever asked. A look that is one of them whole
+(no crop, size, light, grid, scratch or survey) is answered from them while the
+stamp matches the log. When it doesn't and the easel is closed, the look
+answers `{"opening": "Drawing the views: replaying chunk 12 of 55…"}`, waiting
+on the views job already at it or starting one (another automatic job steps
+aside for it), rather than open the easel for one look; an open easel answers
+the look itself.
 
 ## The error log
 
@@ -201,6 +205,7 @@ painter works, a job runs or the app's own easel is open, and only once
 - `out/final.png` (+ `final.jpg`) is made when the last run in runs.log ended
   with status 0 and there is none, and made again when the log is newer, with
   the options of the last finish asked for (`out/app/finish.json`).
+- `out/app/views/` (above) are drawn when missing or older than the log.
 - `out/replay.mp4` is made when there is none or the log is newer, at the
   length last asked for (`out/app/clip.json`, else 75 s).
 - A start, a `look` or `do`, a finish or clip asked for, or a delete cancels an

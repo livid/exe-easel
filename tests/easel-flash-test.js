@@ -7,7 +7,7 @@ const { chromium } = require(process.env.HOME + "/tools/playwright/node_modules/
 (async () => {
   const b = await chromium.launch({ args: ["--disable-gpu"] });
   const p = await b.newPage({ viewport: { width: 980, height: 640 } });
-  await p.route("**/v1/svc/art/**", r => r.request().method() === "GET" || r.request().url().endsWith("/log") ? r.continue() : r.fulfill({ status: 403, body: "{}" }));
+  await p.route("**/v1/svc/easel/**", r => r.request().method() === "GET" || r.request().url().endsWith("/log") ? r.continue() : r.fulfill({ status: 403, body: "{}" }));
   if (process.env.OLD) await p.route("http://127.0.0.1:7777/apps/easel/", r => r.fulfill({ body: require("fs").readFileSync(process.env.OLD, "utf8"), contentType: "text/html; charset=utf-8" }));
   await p.goto("http://127.0.0.1:7777/apps/easel/");
   await p.waitForSelector("#st-list .st");

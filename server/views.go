@@ -5,6 +5,16 @@ package main
 // drawn from. A view asked for on a closed easel would otherwise wait for an
 // open, which replays the whole log (the save holds the canvas and the
 // piles, not the board); with the views kept, the app's View menu answers at
+// once. They are the studio's own easel's looks, taken by a views job
+// (heal.go): it opens the easel (that one replay), looks in every mode and at
+// the palette, keeps them, and closes it again. The engine stays as upstream
+// publishes it.
+
+// The views: the finished canvas as each of `look`'s modes shows it, and the
+// palette board, kept in out/app/views/ with the stamp of the log they were
+// drawn from. A view asked for on a closed easel would otherwise wait for an
+// open, which replays the whole log (the save holds the canvas and the
+// piles, not the board); with the views kept, the app's View menu answers at
 // once. They come from `easel run --views` (crates/easel), as part of the
 // replay a clip makes anyway, or as a heal of their own (heal.go) for a
 // painting whose views are missing or older than its log.
@@ -18,7 +28,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -66,103 +75,109 @@ func keepViews(st *studioState, stamp string) error {
 	return os.Rename(nd, viewsDir(st))
 }
 
-// renderViews replays the log with the replay build to draw the views: the
-// heal for a painting whose replay was made before views were.
+// viewLooks: the views job's looks, by file: the easel's own arguments.
+var viewLooks = []struct {
+	file string
+	args []string
+}{
+	{"normal.png", []string{"look"}},
+	{"value.png", []string{"look", "--mode", "value"}},
+	{"squint.png", []string{"look", "--mode", "squint"}},
+	{"mirror.png", []string{"look", "--mode", "mirror"}},
+	{"relief.png", []string{"look", "--mode", "relief"}},
+	{"gallery.png", []string{"look", "--mode", "gallery"}},
+	{"palette.png", []string{"look", "--palette"}},
+}
+
+// renderViews draws the views with the studio's easel: opened if it is
+// closed (a replay of the whole log, cancelled with ctx), every view looked
+// at, and closed again if this job opened it. A job cancelled while the
+// easel is open leaves it open for whoever asked (the daemon's, closed when
+// idle), since that is what they came for.
 func (d *Daemon) renderViews(ctx context.Context, st *studioState) error {
 	stamp := logStamp(st.dir)
 	nd := viewsNewDir(st)
 	os.RemoveAll(nd)
-	os.Remove(filepath.Join(st.dir, "out/app/views.log"))
-	// the replay build, as finish_painting and replay_clip use it (cargo
-	// answers at once when it is up to date)
-	if err := d.command(ctx, st, "views.log", "cargo", "build", "--release", "-p", "easel"); err != nil {
+	if err := os.MkdirAll(nd, 0o755); err != nil {
 		return err
 	}
-	easel := filepath.Join(d.Repo, "target/release/easel")
-	if err := d.command(ctx, st, "views.log", easel, "run", filepath.Join(st.dir, "paintings/lua/painting.lua"),
-		"--out", filepath.Join(nd, "final.png"), "--views", nd); err != nil {
-		return err
+	opened := false
+	if _, code := easelRunCtx(ctx, st.dir, []string{"status"}, 20*time.Second); code != 0 {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		out, code := easelRunCtx(ctx, st.dir, []string{"open"}, waitOpen)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if code != 0 {
+			return errors.New("the easel didn't open: " + lastLines(out, 6))
+		}
+		opened = true
+	}
+	leave := func() {
+		if ctx.Err() != nil {
+			st.mu.Lock()
+			st.ownEasel, st.lastUse = true, time.Now()
+			st.mu.Unlock()
+		} else if opened {
+			easelRun(st.dir, []string{"close"}, "", waitOther)
+		}
+	}
+	defer leave()
+	for _, v := range viewLooks {
+		out, code := easelRunCtx(ctx, st.dir, v.args, waitOther)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var src string
+		for _, ln := range strings.Split(out, "\n") {
+			if m := pngRe.FindStringSubmatch(strings.TrimSpace(ln)); m != nil {
+				src = m[1]
+			}
+		}
+		if code != 0 || src == "" {
+			return fmt.Errorf("the easel's %s: %s", strings.Join(v.args, " "), lastLines(out, 4))
+		}
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(st.dir, src)
+		}
+		if err := os.Rename(src, filepath.Join(nd, v.file)); err != nil {
+			return err
+		}
 	}
 	return keepViews(st, stamp)
 }
 
-// command runs a program for a studio from the repo, stopped with
-// everything it started when ctx ends. Its output goes to out/app/<logName>
-// as it comes (appended: a job's steps share one log), so a look can tell
-// how far a replay has got.
-func (d *Daemon) command(ctx context.Context, st *studioState, logName string, name string, args ...string) error {
-	os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
-	logPath := filepath.Join(st.dir, "out/app", logName)
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	start, _ := f.Seek(0, 2)
-	env := d.env("TMPDIR=" + os.TempDir())
-	cmd := exec.CommandContext(ctx, lookIn(env, name), args...)
-	cmd.Dir = d.Repo
-	cmd.Env = env
-	cmd.Stdout, cmd.Stderr = f, f
+// easelRunCtx is easelRun that a cancelled ctx stops, with all it started.
+func easelRunCtx(ctx context.Context, studio string, args []string, wait time.Duration) (string, int) {
+	ctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, filepath.Join(studio, "bin", "easel"), args...)
+	cmd.Dir = studio
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + os.Getenv("HOME"), "RAYON_NUM_THREADS=4"}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
-	cmd.WaitDelay = 15 * time.Second
-	if err := cmd.Run(); err != nil {
-		b, _ := os.ReadFile(logPath)
-		if int64(len(b)) > start {
-			b = b[start:]
+	cmd.WaitDelay = 10 * time.Second
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ctx.Err() == nil {
+			return string(out), ee.ExitCode()
 		}
-		return errors.New(lastLines(string(b)+"\n"+err.Error(), 12))
+		return string(out) + err.Error(), -1
 	}
-	return nil
+	return string(out), 0
 }
 
-// lookIn finds a bare program name on the PATH the child is given (env),
-// not the daemon's own: under systemd that has no ~/.cargo/bin, and Go
-// resolves the name with the parent's PATH ("cargo": executable file not
-// found, the first views heal). A name with a slash, or none found, is
-// returned as it is.
-func lookIn(env []string, name string) string {
-	if strings.Contains(name, "/") {
-		return name
-	}
-	for _, kv := range env {
-		if !strings.HasPrefix(kv, "PATH=") {
-			continue
-		}
-		for _, dir := range filepath.SplitList(kv[len("PATH="):]) {
-			p := filepath.Join(dir, name)
-			if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
-				return p
-			}
-		}
-	}
-	return name
-}
-
-// replayChunkRe: the line `easel run` writes after each chunk it replays.
-var replayChunkRe = regexp.MustCompile(`(?m)^\s*chunk\s+(\d+)\s`)
-
-// viewsProgress: how far the replay drawing the views has got, from the
-// newest of the views job's log and the clip's replay log (frames.log).
+// viewsProgress: how far the views job has got: the easel's open, replaying
+// the log ("resuming chunk k/n" in its server.log), then its looks.
 func viewsProgress(st *studioState) string {
-	var newest []byte
-	var at time.Time
-	for _, rel := range []string{"out/app/views.log", "out/app/frames.log"} {
-		p := filepath.Join(st.dir, rel)
-		if fi, err := os.Stat(p); err == nil && fi.ModTime().After(at) {
-			if b, err := os.ReadFile(p); err == nil {
-				newest, at = b, fi.ModTime()
-			}
-		}
+	words := openProgress(st.dir)
+	if strings.HasPrefix(words, "Opening the easel: replaying chunk ") {
+		return "Drawing the views: replaying chunk " + strings.TrimPrefix(words, "Opening the easel: replaying chunk ")
 	}
-	st.mu.Lock()
-	total := st.chunks
-	st.mu.Unlock()
-	if ms := replayChunkRe.FindAllSubmatch(newest, -1); len(ms) > 0 && total > 0 {
-		return fmt.Sprintf("Drawing the views from a replay of the painting: chunk %s of %d…", ms[len(ms)-1][1], total)
-	}
-	return "Drawing the views from a replay of the painting…"
+	return "Drawing the views…"
 }
 
 // isView: a look the kept views can answer (one of them whole).
@@ -186,8 +201,15 @@ func (d *Daemon) viewsComing(st *studioState) string {
 	st.mu.Lock()
 	job, own := st.job, st.ownEasel || st.opening
 	st.mu.Unlock()
-	if job != nil && job.Auto && (job.Kind == "views" || job.Kind == "clip") {
+	if job != nil && job.Auto && job.Kind == "views" {
 		return viewsProgress(st)
+	}
+	// another heal (a replay, a finish) steps aside: a view asked for comes first
+	if job != nil && job.Auto {
+		st.yieldAuto()
+		st.mu.Lock()
+		job = st.job
+		st.mu.Unlock()
 	}
 	if job != nil || own || exists(filepath.Join(st.dir, "out/easel/painting/sock")) || d.paintingNow(st) {
 		return ""
@@ -195,7 +217,7 @@ func (d *Daemon) viewsComing(st *studioState) string {
 	if err := d.runJob(st, "views", true, func(ctx context.Context) error { return d.renderViews(ctx, st) }); err != nil {
 		return ""
 	}
-	return "Drawing the views from a replay of the painting…"
+	return "Drawing the views…"
 }
 
 // keptView answers a look from the kept views when they are of the log as

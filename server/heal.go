@@ -15,8 +15,8 @@ package main
 //     finished with (out/app/finish.json).
 //   - The replay is made when there is none, or the log has moved on past
 //     it, at the length last asked for (out/app/clip.json, else 75 s).
-//   - The views (views.go) come with the replay; a painting whose views are
-//     missing or older than its log gets them drawn by a replay of their own.
+//   - The views (views.go) are drawn when missing or older than the log,
+//     before the replay: they are what the window shows at once.
 //
 // A heal that fails is written to out/app/heal.json with the log's stamp,
 // and not tried again until the log changes: a painting too short to film
@@ -100,13 +100,13 @@ func healNeed(dir string, quiet time.Duration, now time.Time) string {
 			return "finish"
 		}
 	}
+	if failed["views"].Log != stamp && !viewsFresh(dir) {
+		return "views"
+	}
 	if failed["clip"].Log != stamp {
 		if stale, there := olderThanLog("out/replay.mp4"); stale || !there {
 			return "clip"
 		}
-	}
-	if failed["views"].Log != stamp && !viewsFresh(dir) {
-		return "views"
 	}
 	return ""
 }

@@ -4,9 +4,10 @@
 #
 #   harness/claude/paint <studio> [message]
 #
-# The studio is an exported one (scripts/export_r16_studio) with a BRIEF.md. Claude Code
+# The studio is an exported one (engine/scripts/export_r16_studio) with a BRIEF.md. Claude Code
 # runs headless (-p) from the studio with:
-#   - the system prompt harness/painter/system_prompt.md, in place of Claude Code's own;
+#   - the system prompt engine/harness/painter/system_prompt.md (claude-paint's), in place of
+#     Claude Code's own;
 #   - no built-in tools (--tools ""), only mcp__easel__{paint,look,note,status,log,read}
 #     from easel-mcp.ts, which fences `read` to the studio as the pi harness does;
 #   - no settings, hooks, CLAUDE.md, memory or other MCP servers (--setting-sources "",
@@ -64,7 +65,7 @@ set +e
 timeout --signal=INT --kill-after=60 "$(awk "BEGIN{print int($hours*3600)}")" \
   "$claude" -p "${resume[@]}" \
     --model "$model" --effort "$effort" \
-    --system-prompt "$(cat "$here/../painter/system_prompt.md")" \
+    --system-prompt "$(cat "$here/../../engine/harness/painter/system_prompt.md")" \
     --setting-sources "" --strict-mcp-config --mcp-config "$config" \
     --tools "" --allowedTools "$tools" \
     --autocompact 200k \
