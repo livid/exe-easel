@@ -32,10 +32,10 @@ A **studio** is a folder `<studios>/<name>` (default `/www/exe-easel/studios`) h
   "clock": "day 1, 16:40",            // the painting's clock: the last "day N, HH:MM" a paint reply printed
   "canvas": {"w": 1000, "h": 714},    // the latest look's size, else null
   "latest": "out/easel/painting/3f1e….png", // the newest whole-canvas look (see Latest), else ""
-  "final": true,                      // out/final.png exists (and out/final.jpg, its 1600 px web copy)
+  "final": true,                      // out/final.png and out/final.jpg (its 1600 px web copy, written after it) both exist
   "clip": false,                      // out/replay.mp4 exists
   "created": 1791449536000,           // BRIEF.md's mtime
-  "updated": 1791450000000,           // newest mtime of session.jsonl, painting.lua, notes/journal.md, runs.log, out/final.png, out/replay.mp4
+  "updated": 1791450000000,           // newest mtime of session.jsonl, painting.lua, notes/journal.md, runs.log, out/final.png, out/final.jpg, out/replay.mp4
   "started": 1791449537000,           // the last run's start (runs.log), else null
   "ended": null,                      // its end, else null
   "exit": null,                       // its exit status, else null

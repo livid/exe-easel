@@ -825,6 +825,8 @@ function picture(url) {
     p.decoding = "async";
     p.src = url;
     p.ready = p.decode().then(() => true, () => p.complete && p.naturalWidth > 0);
+    // a picture that didn't load isn't kept: the next ask tries again
+    p.ready.then(ok => { if (!ok && pictures.get(url) === p) pictures.delete(url); });
     pictures.set(url, p);
     if (pictures.size > 48) pictures.delete(pictures.keys().next().value);
   }

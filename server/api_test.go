@@ -435,3 +435,19 @@ func TestDownscale(t *testing.T) {
 		t.Fatalf("average %d", r)
 	}
 }
+
+// A studio is finished once the web copy is there too, not between the PNG
+// and the JPEG the app asks for.
+func TestFinalWaitsForTheWebCopy(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "f")
+	os.MkdirAll(filepath.Join(dir, "out"), 0o755)
+	writePNG(t, filepath.Join(dir, "out/final.png"), 30, 20)
+	if d.List()[0].Final {
+		t.Fatal("finished with no final.jpg yet")
+	}
+	os.WriteFile(filepath.Join(dir, "out/final.jpg"), []byte("jpeg"), 0o644)
+	if !d.List()[0].Final {
+		t.Fatal("not finished with both")
+	}
+}

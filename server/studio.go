@@ -284,7 +284,12 @@ func (st *studioState) compute(painting bool) Studio {
 	}
 	bump(filepath.Join(dir, "notes/journal.md"))
 	bump(filepath.Join(dir, "out/claude/runs.log"))
-	_, o.Final = bump(filepath.Join(dir, "out/final.png"))
+	// finished once the web copy the app shows is there too: final.png lands
+	// first and final.jpg a moment after, and a studio said finished in
+	// between sent the app after a picture that wasn't there yet
+	_, png := bump(filepath.Join(dir, "out/final.png"))
+	_, jpg := bump(filepath.Join(dir, "out/final.jpg"))
+	o.Final = png && jpg
 	_, o.Clip = bump(filepath.Join(dir, "out/replay.mp4"))
 	replyPath := filepath.Join(dir, "out/claude/reply.txt")
 	if stamp, _, ok := stampOf(replyPath); ok {
