@@ -18,6 +18,7 @@ dries on a clock, and layers combine by Kubelka–Munk optics. It is the
 | `server/` | `exe-easel`, a small Go daemon (stdlib only) that keeps the studios: it exports them, starts and stops painters, follows their sessions, finishes and films the paintings by itself, and serves it all to the app (`server/API.md`) |
 | `apps/easel/` | the Easel app: the studios, each painter's canvas, session, journal, brief and log, a console for painting by hand, the replay |
 | `projects/haixing/` | an example: six painters illustrating the six chapters of a short story |
+| `projects/modouji/` | the same for its sequel: ten chapters, ten painters, started through the daemon |
 | `tests/` | headless checks of the app |
 
 ![A painter's Session: its chunks of Lua, what it saw when it looked, and its notes, as they come](docs/easel-session.jpg)

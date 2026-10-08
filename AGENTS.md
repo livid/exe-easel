@@ -10,6 +10,7 @@ README.md says what the repository is; this says how to work in it.
 | `server/` | the `exe-easel` daemon on 127.0.0.1:7794, user unit `exe-easel`; `server/API.md` is its contract |
 | `apps/easel/` | the Easel app; exe serves it from `apps_dirs` and relays `/v1/svc/easel/` to the daemon |
 | `projects/haixing/` | six painters for the chapters of a short story (`run setup|start|status|finish`) |
+| `projects/modouji/` | ten painters for the chapters of its sequel, started through the daemon (same commands) |
 | `studios/`, `logs/` | runtime, ignored by Git |
 
 ## When something in Easel goes wrong
