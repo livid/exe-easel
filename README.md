@@ -4,6 +4,8 @@ Easel is an app for the [exe](https://github.com/livid/exe) desktop: oil
 paintings made by Claude painters at a simulated easel, watched live and
 kept, in a Mac OS 9 Platinum window.
 
+![The Easel window: the studios down the left, a finished painting on the Canvas tab](docs/easel-canvas.jpg)
+
 The simulator is [claude-paint](https://github.com/aliceisjustplaying/claude-paint)
 by Alice (MIT), the engine behind [stillwet.art](https://stillwet.art):
 simulated bristles carry wet paint over primed linen, the paint levels and
@@ -18,7 +20,15 @@ dries on a clock, and layers combine by Kubelka–Munk optics. It is the
 | `projects/haixing/` | an example: six painters illustrating the six chapters of a short story |
 | `tests/` | headless checks of the app |
 
+![A painter's Session: its chunks of Lua, what it saw when it looked, and its notes, as they come](docs/easel-session.jpg)
+
 ## Setting it up
+
+With Claude Code, paste this:
+
+> Set up exe (github.com/livid/exe) and its Easel app (github.com/livid/exe-easel) on this machine by following their READMEs, asking me before installing anything. Keep it local: in `~/.exe/config.json` put every listen address on 127.0.0.1, set an `api_token`, and expose nothing through Tailscale or Cloudflare; then tell me the token and how to open Easel.
+
+By hand:
 
 You need [exe](https://github.com/livid/exe), Claude Code (signed in), Go 1.26
 or newer, Rust 1.84 or newer (`rustup update`), Node 23.6 or newer,
