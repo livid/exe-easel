@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Run one painter in a studio with Claude Code, the way harness/painter runs one with pi:
+# the painter's system prompt, the easel's tools (easel-mcp.ts) and nothing else.
+#
+#   harness/claude/paint <studio> [message]
+#
+# The studio is an exported one (scripts/export_r16_studio) with a BRIEF.md. Claude Code
+# runs headless (-p) from the studio with:
+#   - the system prompt harness/painter/system_prompt.md, in place of Claude Code's own;
+#   - no built-in tools (--tools ""), only mcp__easel__{paint,look,note,status,log,read}
+#     from easel-mcp.ts, which fences `read` to the studio as the pi harness does;
+#   - no settings, hooks, CLAUDE.md, memory or other MCP servers (--setting-sources "",
+#     --strict-mcp-config): nothing of the machine's own setup reaches the painter;
+#   - compaction at 200k tokens (--autocompact), which bounds the images resent with
+#     each request (see easel-mcp.ts).
+#
+# Writes <studio>/out/claude/session.jsonl (Claude Code's stream-json: every turn,
+# tool call and result), stderr.log and reply.txt (the painter's last message), then
+# closes the easel so its save file (out/easel/painting/live.ckpt) is there for
+# scripts/finish_painting.
+#
+# Environment:
+#   PAINTER_MODEL    default claude-opus-5-5
+#   PAINTER_EFFORT   default high (the pi lanes ran --thinking high)
+#   PAINTER_HOURS    wall-clock limit, default 4; at the limit the session is stopped and
+#                    the easel closed: the log is the painting so far
+#   RAYON_NUM_THREADS  the easel's thread budget (default 4: several painters share the machine)
+#   CLAUDE           the claude binary (default: claude on PATH)
+set -euo pipefail
+
+[ $# -ge 1 ] || { echo "usage: $0 <studio> [message]" >&2; exit 2; }
+studio=$(cd "$1" && pwd)
+here=$(cd "$(dirname "$0")" && pwd)
+[ -x "$studio/bin/easel" ] || { echo "$studio has no bin/easel" >&2; exit 1; }
+[ -f "$studio/BRIEF.md" ] || { echo "$studio has no BRIEF.md" >&2; exit 1; }
+
+message=${2:-"Your brief is in BRIEF.md in this folder. Your last message is your reply: the painting's title if you give it one and, if you like, a few sentences about the picture."}
+model=${PAINTER_MODEL:-claude-opus-5-5}
+effort=${PAINTER_EFFORT:-high}
+hours=${PAINTER_HOURS:-4}
+threads=${RAYON_NUM_THREADS:-4}
+claude=${CLAUDE:-claude}
+node=${NODE:-$(command -v node || echo "$HOME/.nvm/versions/node/v24.15.0/bin/node")}
+
+out="$studio/out/claude"
+mkdir -p "$out"
+config="$out/mcp.json"
+python3 -I - "$node" "$here/easel-mcp.ts" "$studio" "$threads" > "$config" <<'EOF'
+import json, sys
+node, server, studio, threads = sys.argv[1:5]
+print(json.dumps({"mcpServers": {"easel": {"type": "stdio", "command": node, "args": [server, studio],
+                                            "env": {"RAYON_NUM_THREADS": threads}}}}))
+EOF
+
+tools=mcp__easel__paint,mcp__easel__look,mcp__easel__note,mcp__easel__status,mcp__easel__log,mcp__easel__read
+
+# a fresh session or the next sitting of one that stopped: --resume keeps its context
+resume=()
+if [ -s "$out/session_id" ]; then resume=(--resume "$(cat "$out/session_id")"); fi
+
+echo "$(date -u +%FT%TZ) start model=$model effort=$effort hours=$hours ${resume[*]}" >> "$out/runs.log"
+cd "$studio"
+set +e
+timeout --signal=INT --kill-after=60 "$(awk "BEGIN{print int($hours*3600)}")" \
+  "$claude" -p "${resume[@]}" \
+    --model "$model" --effort "$effort" \
+    --system-prompt "$(cat "$here/../painter/system_prompt.md")" \
+    --setting-sources "" --strict-mcp-config --mcp-config "$config" \
+    --tools "" --allowedTools "$tools" \
+    --autocompact 200k \
+    --output-format stream-json --verbose \
+    "$message" < /dev/null >> "$out/session.jsonl" 2>> "$out/stderr.log"
+status=$?
+set -e
+
+# the session's id (for a later sitting) and the painter's last message
+python3 -I - "$out/session.jsonl" "$out" <<'EOF'
+import json, sys
+path, out = sys.argv[1:3]
+sid = reply = None
+for line in open(path, encoding="utf-8", errors="replace"):
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
+    sid = m.get("session_id") or sid
+    if m.get("type") == "result" and isinstance(m.get("result"), str):
+        reply = m["result"]
+if sid:
+    open(f"{out}/session_id", "w").write(sid + "\n")
+if reply is not None:
+    open(f"{out}/reply.txt", "w").write(reply.rstrip() + "\n")
+EOF
+
+"$studio/bin/easel" close > /dev/null 2>&1 || true
+echo "$(date -u +%FT%TZ) end status=$status" >> "$out/runs.log"
+exit $status
