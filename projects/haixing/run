@@ -54,7 +54,7 @@ status)
     chunks=$(grep -c '^--@ chunk' "$s/paintings/lua/painting.lua" 2>/dev/null || true)
     looks=$(grep -c '"name":"mcp__easel__look"' "$s/out/claude/session.jsonl" 2>/dev/null || true)
     echo "haixing-$n: ${chunks:-0} chunks, ${looks:-0} looks · $(tail -1 "$s/out/claude/runs.log" 2>/dev/null)"
-    [ -s "$s/out/claude/reply.txt" ] && sed 's/^/    /' "$s/out/claude/reply.txt" | head -12
+    if [ -s "$s/out/claude/reply.txt" ]; then sed 's/^/    /' "$s/out/claude/reply.txt" | head -12; fi
   done ;;
 finish)
   shift
