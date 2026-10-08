@@ -602,6 +602,10 @@ async function easelCall(path, body, progress, stale) {
 }
 const withToken = u => TOKEN ? u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) : u;
 const fileURL = (name, path, w) => withToken(API + "/studios/" + encodeURIComponent(name) + "/files/" + path.split("/").map(encodeURIComponent).join("/") + (w ? "?w=" + w : ""));
+// the finished picture by version: the daemon answers a versioned URL as
+// immutable, so a studio seen once shows from the cache, and a new finish
+// (a new updated stamp) is a new URL
+const finalURL = (s, file, w) => { const u = fileURL(s.name, "out/" + file, w); return u + (u.includes("?") ? "&" : "?") + "v=" + (s.updated || 0); };
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const hhmm = ms => { if (!ms) return ""; const d = new Date(ms); return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); };
 const fmtWhen = ms => {
@@ -651,7 +655,7 @@ function stateWords(s) {
   return (s.ended ? "Stopped" : "Idle") + " · " + plural(s.chunks, "chunk");
 }
 function thumbURL(s) {
-  if (s.final) return fileURL(s.name, "out/final.jpg", 36 * DPR());
+  if (s.final) return finalURL(s, "final.jpg", 36 * DPR());
   return s.latest ? fileURL(s.name, s.latest, 36 * DPR()) : "";
 }
 function rowFor(s) {
@@ -680,6 +684,7 @@ function renderList() {
   const rows = studios.map(rowFor);
   rows.forEach((r, i) => { if (list.children[i] !== r) list.insertBefore(r, list.children[i] || null); });
   while (list.children.length > rows.length) list.lastChild.remove();
+  prefetch();
   const empty = $("#st-empty");
   empty.hidden = studios.length > 0;
   empty.textContent = "No studios yet. New Studio… sets one up: an easel, a box of tubes and a brief for the painter.";
@@ -715,8 +720,10 @@ async function selectStudio(name, user) {
     seEvents = []; seNext = 0; seLoaded = false; seFor = null; $("#se-list").textContent = "";
     jnFor = null; codeFor = null; briefFor = null;
     const s0 = studios.find(x => x.name === name);
-    view = s0 && s0.final ? "final" : "latest"; $("#view").value = view; shownURL = ""; shownFor = null;
-    $("#cv-img").hidden = true; $("#cv-img").removeAttribute("src");
+    // the picture shown stays until the next one is decoded (showImage): an
+    // empty box between the two read as a flash
+    view = s0 && s0.final ? "final" : "latest"; $("#view").value = view; shownURL = ""; shownFor = null; lookSeq++;
+    $("#cv-busy").classList.remove("on");
     resetConsole();
     resetReplay();
     renderList();
@@ -801,28 +808,60 @@ function renderCanvas() {
     else if (s.final) { view = "final"; $("#view").value = "final"; return renderCanvas(); }
     else { clearImage(); note.textContent = s.state === "painting" ? "The painter hasn’t looked at the canvas yet." : s.chunks ? "No look yet: choose Canvas Now to see it." : "Nothing on the canvas yet."; }
   } else if (view === "final") {
-    showImage(fileURL(s.name, "out/final.jpg"), 0, 0, "Finished: dried, varnished and cracked");
+    showImage(finalURL(s, "final.jpg"), 0, 0, "Finished: dried, varnished and cracked");
     note.textContent = "";
   } else if (shownFor !== s.name + "|" + view) {
     easelLook(view);
   }
 }
 function clearImage() { const img = $("#cv-img"); img.hidden = true; img.removeAttribute("src"); shownURL = ""; $("#cv-dims").textContent = ""; }
-// the new picture loads beside the old and takes its place when it is
-// there: the box keeps its size, so nothing moves
+// pictures fetched (and decoded) ahead: by URL, an <img> ready to go in
+const pictures = new Map();
+function picture(url) {
+  let p = pictures.get(url);
+  if (!p) {
+    p = new Image();
+    p.alt = "";
+    p.decoding = "async";
+    p.src = url;
+    p.ready = p.decode().then(() => true, () => p.complete && p.naturalWidth > 0);
+    pictures.set(url, p);
+    if (pictures.size > 48) pictures.delete(pictures.keys().next().value);
+  }
+  return p;
+}
+// the new picture loads and decodes beside the old one and takes its place
+// as a whole node when it can paint: the box keeps its size and never shows
+// empty, so nothing moves and nothing flashes
 function showImage(url, w, h, words) {
-  const img = $("#cv-img");
   $("#cv-dims").textContent = words + (w ? " · " + w + " × " + h : "");
   if (shownURL === url) return;
   shownURL = url;
-  const pre = new Image();
-  pre.onload = () => {
+  const p = picture(url);
+  p.ready.then(ok => {
     if (shownURL !== url) return;
-    img.src = url; img.hidden = false;
-    if (!w) $("#cv-dims").textContent = words + " · " + pre.naturalWidth + " × " + pre.naturalHeight;
+    if (!ok) {
+      $("#cv-note").textContent = "This picture didn’t load.";
+      report("error", "a picture didn’t load", { where: "canvas " + view, url: url.replace(/token=[^&]*/, "token=…") });
+      return;
+    }
+    const cur = $("#cv-img");
+    if (cur !== p) { p.id = "cv-img"; p.hidden = false; cur.replaceWith(p); }
+    if (!w) $("#cv-dims").textContent = words + " · " + p.naturalWidth + " × " + p.naturalHeight;
+  });
+}
+// each studio's picture is fetched once the list is drawn, while the window
+// is idle (not on a phone: data may be dear there), so a switch finds it ready
+function prefetch() {
+  if (MOBILE) return;
+  const go = () => {
+    for (const s of studios) {
+      if (s.state === "painting") continue; // its latest look changes every few seconds
+      if (s.final) picture(finalURL(s, "final.jpg"));
+      else if (s.latest) picture(fileURL(s.name, s.latest));
+    }
   };
-  pre.onerror = () => { if (shownURL === url) { $("#cv-note").textContent = "This picture didn’t load."; report("error", "a picture didn’t load", { where: "canvas " + view, url: url.replace(/token=[^&]*/, "token=…") }); } };
-  pre.src = url;
+  (window.requestIdleCallback || setTimeout)(go, { timeout: 2000 });
 }
 async function easelLook(v) {
   const s = cur(), name = s.name, seq = ++lookSeq;
@@ -843,9 +882,9 @@ async function easelLook(v) {
 }
 $("#view").addEventListener("change", e => { view = e.target.value; shownFor = null; renderCanvas(); });
 // a click hands the picture at full size to the desktop's PictureViewer
-$("#cv-img").addEventListener("click", () => {
-  const s = cur(); if (!s || !shownURL) return;
-  const full = shownURL.includes("out/final.jpg") ? fileURL(s.name, "out/final.png") : shownURL;
+$("#cv-box").addEventListener("click", e => {
+  const s = cur(); if (!s || !shownURL || e.target.id !== "cv-img") return;
+  const full = shownURL.includes("out/final.jpg") ? finalURL(s, "final.png") : shownURL;
   const abs = new URL(full, location.href).href;
   if (window.parent !== window) parent.postMessage({ exe: "view-image", url: abs, name: (s.title || s.name) + ".png" }, location.origin);
   else window.open(abs, "_blank");

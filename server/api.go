@@ -406,7 +406,10 @@ func (d *Daemon) file(w http.ResponseWriter, r *http.Request, st *studioState) {
 	if t, ok := textTypes[ext]; ok {
 		w.Header().Set("Content-Type", t)
 		w.Header().Set("Cache-Control", "no-store")
-	} else if immutable {
+	} else if immutable || r.URL.Query().Get("v") != "" {
+		// a look never changes; any other file asked for by version (the app
+		// adds ?v=<the studio's updated stamp> to the finished picture) is
+		// that version for good: a newer one has a new URL
 		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "no-cache")
