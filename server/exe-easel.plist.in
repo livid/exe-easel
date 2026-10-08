@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>@LABEL@</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>@BIN@</string>
+		<string>-listen</string>
+		<string>127.0.0.1:7794</string>
+		<string>-repo</string>
+		<string>@REPO@</string>
+		<string>-node</string>
+		<string>@NODE@</string>
+		<string>-claude</string>
+		<string>@CLAUDE@</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>@REPO@</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>@PATH@</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<!-- painters run in sessions of their own; a job a restart leaves behind is
+	     not killed with the agent (as KillMode=process under systemd) -->
+	<key>AbandonProcessGroup</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>@REPO@/logs/daemon.log</string>
+	<key>StandardErrorPath</key>
+	<string>@REPO@/logs/daemon.log</string>
+</dict>
+</plist>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,11 +16,15 @@ type Proc struct {
 	Cwd  string
 }
 
-// scanProcs reads /proc. Processes that vanish mid-read are skipped.
+// scanProcs reads /proc, or asks ps where there is none (macOS). ps gives
+// no working directory: there a painter is known by its argv alone (the
+// daemon and projects/haixing/run pass the studio's absolute path) and Stop
+// finds claude by the pid file paint writes (out/claude/claude.pid).
+// Processes that vanish mid-read are skipped.
 func scanProcs() []Proc {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
-		return nil
+		return scanPS()
 	}
 	var out []Proc
 	for _, e := range ents {
@@ -88,4 +93,26 @@ func indexProcs(ps []Proc) procIndex {
 		}
 	}
 	return ix
+}
+
+// scanPS lists processes with ps: the pid, the command name and the whole
+// command line (split on spaces: studio paths have none).
+func scanPS() []Proc {
+	out, err := exec.Command("ps", "-axo", "pid=,comm=,args=").Output()
+	if err != nil {
+		return nil
+	}
+	var ps []Proc
+	for _, ln := range strings.Split(string(out), "\n") {
+		f := strings.Fields(ln)
+		if len(f) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
+		ps = append(ps, Proc{PID: pid, Comm: filepath.Base(f[1]), Argv: f[2:]})
+	}
+	return ps
 }

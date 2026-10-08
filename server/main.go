@@ -22,12 +22,23 @@ func main() {
 	if p, err := exec.LookPath("claude"); err == nil {
 		defClaude = p
 	}
+	defNode := filepath.Join(home, ".nvm/versions/node/v24.15.0/bin/node")
+	if p, err := exec.LookPath("node"); err == nil {
+		defNode = p
+	}
+	// the checkout this binary was built in (server/exe-easel), wherever it was cloned
+	defRepo := "/www/exe-easel"
+	if exe, err := os.Executable(); err == nil {
+		if r := filepath.Dir(filepath.Dir(exe)); exists(filepath.Join(r, "harness/claude/paint")) {
+			defRepo = r
+		}
+	}
 	listen := flag.String("listen", "127.0.0.1:7794", "address to serve on")
-	repo := flag.String("repo", "/www/exe-easel", "the exe-easel checkout")
+	repo := flag.String("repo", defRepo, "the exe-easel checkout (default: the one this binary is in)")
 	engine := flag.String("engine", "", "the claude-paint checkout: the simulator, its scripts and the painter's notes (default <repo>/engine, the submodule)")
 	studios := flag.String("studios", "", "the studios folder (default <repo>/studios)")
 	claude := flag.String("claude", defClaude, "the claude CLI")
-	node := flag.String("node", filepath.Join(home, ".nvm/versions/node/v24.15.0/bin/node"), "node 24, for the easel MCP server")
+	node := flag.String("node", defNode, "node 24, for the easel MCP server")
 	exe := flag.String("exe", "http://127.0.0.1:7777", "exe's API, for POST /v1/push (empty: no pushes)")
 	exeConfig := flag.String("exe-config", filepath.Join(home, ".exe/config.json"), "exe's config, read for its api_token")
 	errors := flag.String("errors", "", "the error log (default <repo>/logs/error.log); a scratch daemon gives its own")

@@ -23,7 +23,8 @@
 # Environment:
 #   PAINTER_MODEL    default claude-opus-5-5
 #   PAINTER_EFFORT   default high (the pi lanes ran --thinking high)
-#   PAINTER_HOURS    wall-clock limit, default 4; at the limit the session is stopped and
+#   PAINTER_HOURS    wall-clock limit, default 4 (bash's own watchdog: no GNU timeout
+#                    needed, so macOS runs it as it is); at the limit the session is stopped and
 #                    the easel closed: the log is the painting so far
 #   RAYON_NUM_THREADS  the easel's thread budget (default 4: several painters share the machine)
 #   CLAUDE           the claude binary (default: claude on PATH)
@@ -46,12 +47,11 @@ node=${NODE:-$(command -v node || echo "$HOME/.nvm/versions/node/v24.15.0/bin/no
 out="$studio/out/claude"
 mkdir -p "$out"
 config="$out/mcp.json"
-python3 -I - "$node" "$here/easel-mcp.ts" "$studio" "$threads" > "$config" <<'EOF'
-import json, sys
-node, server, studio, threads = sys.argv[1:5]
-print(json.dumps({"mcpServers": {"easel": {"type": "stdio", "command": node, "args": [server, studio],
-                                            "env": {"RAYON_NUM_THREADS": threads}}}}))
-EOF
+"$node" -e '
+const [node, server, studio, threads] = process.argv.slice(1);
+process.stdout.write(JSON.stringify({ mcpServers: { easel: { type: "stdio", command: node, args: [server, studio],
+  env: { RAYON_NUM_THREADS: threads } } } }) + "\n");
+' "$node" "$here/easel-mcp.ts" "$studio" "$threads" > "$config"
 
 tools=mcp__easel__paint,mcp__easel__look,mcp__easel__note,mcp__easel__status,mcp__easel__log,mcp__easel__read
 
@@ -61,37 +61,64 @@ if [ -s "$out/session_id" ]; then resume=(--resume "$(cat "$out/session_id")"); 
 
 echo "$(date -u +%FT%TZ) start model=$model effort=$effort hours=$hours ${resume[*]}" >> "$out/runs.log"
 cd "$studio"
+secs=$(awk "BEGIN{print int($hours*3600)}")
 set +e
-timeout --signal=INT --kill-after=60 "$(awk "BEGIN{print int($hours*3600)}")" \
-  "$claude" -p "${resume[@]}" \
+# job control on: a non-interactive bash starts background jobs with SIGINT
+# ignored, and SIGINT is how the time limit and Stop end a sitting
+set -m
+"$claude" -p "${resume[@]}" \
     --model "$model" --effort "$effort" \
     --system-prompt "$(cat "$here/../../engine/harness/painter/system_prompt.md")" \
     --setting-sources "" --strict-mcp-config --mcp-config "$config" \
     --tools "" --allowedTools "$tools" \
     --autocompact 200k \
     --output-format stream-json --verbose \
-    "$message" < /dev/null >> "$out/session.jsonl" 2>> "$out/stderr.log"
+    "$message" < /dev/null >> "$out/session.jsonl" 2>> "$out/stderr.log" &
+cpid=$!
+# the daemon's Stop interrupts this pid (on macOS there is no /proc to find it by)
+echo "$cpid" > "$out/claude.pid"
+# the wall-clock limit, without GNU timeout (macOS has none): interrupt claude
+# at the limit, kill it a minute later if it is still there
+(
+  waited=0
+  while kill -0 "$cpid" 2>/dev/null; do
+    if [ "$waited" -ge "$secs" ]; then
+      kill -INT "$cpid" 2>/dev/null
+      for _ in $(seq 60); do kill -0 "$cpid" 2>/dev/null || exit 0; sleep 1; done
+      kill -KILL "$cpid" 2>/dev/null
+      exit 0
+    fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+) &
+wpid=$!
+wait "$cpid"
 status=$?
+kill "$wpid" 2>/dev/null
+wait "$wpid" 2>/dev/null
+rm -f "$out/claude.pid"
+set +m
 set -e
 
 # the session's id (for a later sitting) and the painter's last message
-python3 -I - "$out/session.jsonl" "$out" <<'EOF'
-import json, sys
-path, out = sys.argv[1:3]
-sid = reply = None
-for line in open(path, encoding="utf-8", errors="replace"):
-    try:
-        m = json.loads(line)
-    except ValueError:
-        continue
-    sid = m.get("session_id") or sid
-    if m.get("type") == "result" and isinstance(m.get("result"), str):
-        reply = m["result"]
-if sid:
-    open(f"{out}/session_id", "w").write(sid + "\n")
-if reply is not None:
-    open(f"{out}/reply.txt", "w").write(reply.rstrip() + "\n")
-EOF
+"$node" -e '
+const fs = require("fs"), readline = require("readline");
+const [path, out] = process.argv.slice(1);
+let sid = null, reply = null;
+// line by line: a long session is hundreds of MB of looks
+const lines = readline.createInterface({ input: fs.createReadStream(path, "utf8"), crlfDelay: Infinity });
+lines.on("line", line => {
+  let m;
+  try { m = JSON.parse(line); } catch { return; }
+  if (m.session_id) sid = m.session_id;
+  if (m.type === "result" && typeof m.result === "string") reply = m.result;
+});
+lines.on("close", () => {
+  if (sid) fs.writeFileSync(out + "/session_id", sid + "\n");
+  if (reply !== null) fs.writeFileSync(out + "/reply.txt", reply.trimEnd() + "\n");
+});
+' "$out/session.jsonl" "$out"
 
 "$studio/bin/easel" close > /dev/null 2>&1 || true
 echo "$(date -u +%FT%TZ) end status=$status" >> "$out/runs.log"

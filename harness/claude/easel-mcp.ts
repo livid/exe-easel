@@ -7,15 +7,17 @@
  *
  * Each tool runs the studio's `bin/easel` through engine/harness/painter/easel-client.ts, so the replies,
  * hidden counters, renamed looks and the studio fence are pi's, word for word. A look comes
- * back as a JPEG of the PNG the easel wrote (quality 92, no chroma subsampling; the PNG stays
+ * back as a JPEG of the PNG the easel wrote (quality 92, no chroma subsampling, by PIL; on a
+ * Mac without PIL by sips; the PNG stays
  * on disk for `read` and `compare`), shrunk to MAX_SIDE if it is longer (Anthropic refuses images
  * over 2000 px once a request holds more than 20). Claude Code sends every image in the context
  * again with each request, and a request over 32 MB is refused: a 1000 px look is ~400 KB as PNG
  * and ~120 KB as JPEG, and the launcher compacts at 200k tokens, so a context holds ~20 MB at most.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { extname, resolve } from "node:path";
+import { existsSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { atEasel, hideCounters, logReply, lookArgs, paintReply, renameLooks, statusReply, studioPath, surveyReply, tail, toolWords } from "../../engine/harness/painter/easel-client.ts";
 import { reviseJournal } from "../../engine/harness/painter/journal.ts";
@@ -51,7 +53,19 @@ function image(path: string): Content {
 		"im.thumbnail((m,m),Image.LANCZOS)\nb=io.BytesIO();im.save(b,'JPEG',quality=92,subsampling=0);sys.stdout.buffer.write(b.getvalue())";
 	const r = spawnSync("python3", ["-I", "-c", py, path, String(MAX_SIDE)], { maxBuffer: 256 * 1024 * 1024 });
 	if (r.status === 0 && r.stdout.length > 0) return { type: "image", data: r.stdout.toString("base64"), mimeType: "image/jpeg" };
+	// macOS without PIL: its own sips (resampled only when too large: -Z also enlarges)
 	const size = pngSize(buf);
+	if (process.platform === "darwin") {
+		const tmp = join(tmpdir(), `easel-look-${process.pid}-${Date.now()}.jpg`);
+		const args = ["-s", "format", "jpeg", "-s", "formatOptions", "92"];
+		if (size && Math.max(...size) > MAX_SIDE) args.push("-Z", String(MAX_SIDE));
+		const q = spawnSync("sips", [...args, path, "--out", tmp]);
+		if (q.status === 0 && existsSync(tmp)) {
+			const jpg = readFileSync(tmp);
+			try { unlinkSync(tmp); } catch {}
+			if (jpg.length > 0) return { type: "image", data: jpg.toString("base64"), mimeType: "image/jpeg" };
+		}
+	}
 	if (size && Math.max(...size) > MAX_SIDE) throw new Error(`${path}: ${size[0]}x${size[1]} is too large to show and could not be shrunk`);
 	return { type: "image", data: buf.toString("base64"), mimeType: "image/png" };
 }

@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -76,13 +77,13 @@ func (d *Daemon) env(extra ...string) []string {
 	}
 	add(filepath.Join(home, ".cargo/bin"))
 	add(filepath.Join(home, ".local/bin"))
-	for _, p := range []string{"/usr/local/go/bin", "/usr/local/bin", "/usr/bin", "/bin"} {
+	for _, p := range []string{"/opt/homebrew/bin", "/usr/local/go/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"} {
 		add(p)
 	}
 	env := []string{"PATH=" + strings.Join(dirs, ":"), "HOME=" + home}
 	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
 		env = append(env, "XDG_RUNTIME_DIR="+v)
-	} else {
+	} else if runtime.GOOS == "linux" {
 		env = append(env, fmt.Sprintf("XDG_RUNTIME_DIR=/run/user/%d", os.Getuid()))
 	}
 	if v := os.Getenv("LANG"); v != "" {
@@ -240,6 +241,10 @@ func (d *Daemon) launchPainter(name, studio string, env []string) error {
 		args = append(args, "--setenv="+e)
 	}
 	args = append(args, paint, studio)
+	// systemd where there is one (Linux); elsewhere (macOS) a session of its own
+	if _, lerr := exec.LookPath("systemd-run"); lerr != nil || os.Getenv("EXE_EASEL_NO_SYSTEMD") != "" {
+		return d.launchDetached(paint, studio, env)
+	}
 	cmd := exec.Command("systemd-run", args...)
 	cmd.Env = d.env()
 	out, err := cmd.CombinedOutput()
@@ -255,6 +260,12 @@ func (d *Daemon) launchPainter(name, studio string, env []string) error {
 	} else {
 		log.Printf("systemd-run %s: %v %s / %v %s; falling back to setsid", name, err, out, err2, out2)
 	}
+	return d.launchDetached(paint, studio, env)
+}
+
+// launchDetached runs paint in a session of its own, so it outlives the
+// daemon (KillMode=process under systemd, or launchd's agent on macOS).
+func (d *Daemon) launchDetached(paint, studio string, env []string) error {
 	logf, err := os.OpenFile(filepath.Join(studio, "out/claude/launcher.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
@@ -282,6 +293,13 @@ func (d *Daemon) Stop(st *studioState) error {
 	d.mu.Unlock()
 	if !painting {
 		return &httpError{409, "no painter is at the easel"}
+	}
+	// the pid paint wrote: the only road on macOS, which has no /proc to find
+	// claude by its working directory
+	if b, err := os.ReadFile(filepath.Join(st.dir, "out/claude/claude.pid")); err == nil {
+		if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 && syscall.Kill(p, 0) == nil {
+			pid = p
+		}
 	}
 	switch {
 	case pid > 0:
