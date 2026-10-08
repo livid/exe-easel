@@ -496,3 +496,34 @@ func TestPreflight(t *testing.T) {
 		t.Fatalf("the error log has %d preflight lines, want %d", warned, len(problems))
 	}
 }
+
+// A web page can't drive the daemon: not by a rebound name, not by a
+// cross-site request straight at the port; programs and exe's relay can.
+func TestBrowserGuard(t *testing.T) {
+	_, srv, _, _ := newTestDaemon(t)
+	get := func(mod func(*http.Request)) int {
+		req, _ := http.NewRequest("GET", srv.URL+"/v1/health", nil)
+		mod(req)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	if c := get(func(r *http.Request) {}); c != 200 {
+		t.Fatalf("a program: %d", c)
+	}
+	if c := get(func(r *http.Request) { r.Host = "rebound.example:7794" }); c != 403 {
+		t.Fatalf("a rebound name: %d", c)
+	}
+	if c := get(func(r *http.Request) { r.Header.Set("Origin", "https://some.site") }); c != 403 {
+		t.Fatalf("a page straight at the port: %d", c)
+	}
+	if c := get(func(r *http.Request) {
+		r.Header.Set("Origin", "http://127.0.0.1:7777")
+		r.Header.Set("X-Forwarded-Host", "127.0.0.1:7777")
+	}); c != 200 {
+		t.Fatalf("through exe's relay: %d", c)
+	}
+}

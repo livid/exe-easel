@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -113,6 +114,10 @@ func (s *statusWriter) Flush() {
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
 	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if why := refused(r); why != "" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": why})
+			return
+		}
 		sw := &statusWriter{ResponseWriter: w, code: 200}
 		mux.ServeHTTP(sw, r)
 		if sw.code >= 500 {
@@ -455,4 +460,29 @@ func (d *Daemon) events(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// refused says why a request is turned away, or "". The daemon has no token
+// of its own: it listens on the loopback, and the app reaches it through
+// exe's relay, behind exe's token. What the loopback alone doesn't stop is a
+// web page in the user's browser: one that names this port can send a POST
+// it cannot read the answer to (start a painter, trash a studio), and one
+// whose name resolves to 127.0.0.1 (DNS rebinding) can read answers too. So
+// the Host must be the loopback's, and a request a browser made (it carries
+// an Origin) must have come through exe's relay, which says so in
+// X-Forwarded-Host. curl and other programs on the machine send no Origin.
+func refused(r *http.Request) string {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	switch strings.Trim(host, "[]") {
+	case "127.0.0.1", "localhost", "::1":
+	default:
+		return "this daemon answers only at 127.0.0.1"
+	}
+	if r.Header.Get("Origin") != "" && r.Header.Get("X-Forwarded-Host") == "" {
+		return "a browser reaches this daemon only through exe's relay (/v1/svc/easel/)"
+	}
+	return ""
 }
