@@ -5,18 +5,23 @@
 GO     ?= $(shell command -v go 2>/dev/null || echo /usr/local/go/bin/go)
 NODE   ?= $(shell command -v node 2>/dev/null)
 CLAUDE ?= $(shell command -v claude 2>/dev/null || echo $(HOME)/.local/bin/claude)
+CARGO  ?= $(shell command -v cargo 2>/dev/null || echo $(HOME)/.cargo/bin/cargo)
 REPO   := $(abspath $(CURDIR)/..)
 BIN    := $(CURDIR)/exe-easel
 OS     := $(shell uname -s)
 # what the daemon and its painters need on PATH under a service manager
-SVCPATH := $(dir $(NODE)):$(dir $(CLAUDE)):$(HOME)/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+SVCPATH := $(dir $(NODE)):$(dir $(CLAUDE)):$(dir $(CARGO)):$(HOME)/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 
 UNIT      := $(HOME)/.config/systemd/user/exe-easel.service
 SYSTEMCTL := XDG_RUNTIME_DIR=/run/user/$(shell id -u) systemctl --user
 LABEL     := com.github.livid.exe-easel
 PLIST     := $(HOME)/Library/LaunchAgents/$(LABEL).plist
+# RUSTUP_HOME and CARGO_HOME go into the service only when set here (a rustup
+# installed somewhere of its own); a line left empty is dropped
 FILL       = sed -e 's|@BIN@|$(BIN)|g' -e 's|@REPO@|$(REPO)|g' -e 's|@NODE@|$(NODE)|g' \
-               -e 's|@CLAUDE@|$(CLAUDE)|g' -e 's|@PATH@|$(SVCPATH)|g' -e 's|@LABEL@|$(LABEL)|g'
+               -e 's|@CLAUDE@|$(CLAUDE)|g' -e 's|@PATH@|$(SVCPATH)|g' -e 's|@LABEL@|$(LABEL)|g' \
+               -e 's|@RUSTUP_HOME@|$(RUSTUP_HOME)|g' -e 's|@CARGO_HOME@|$(CARGO_HOME)|g' \
+               -e '/=$$/d' -e '/<string><\/string>/d'
 
 .PHONY: build test install restart uninstall check engine
 

@@ -75,12 +75,23 @@ func (d *Daemon) env(extra ...string) []string {
 	if d.Claude != "" {
 		add(filepath.Dir(d.Claude))
 	}
+	// the daemon's own PATH next (a service's, which make install wrote with
+	// the cargo it found), then the usual places
+	for _, p := range filepath.SplitList(os.Getenv("PATH")) {
+		add(p)
+	}
 	add(filepath.Join(home, ".cargo/bin"))
 	add(filepath.Join(home, ".local/bin"))
 	for _, p := range []string{"/opt/homebrew/bin", "/usr/local/go/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"} {
 		add(p)
 	}
 	env := []string{"PATH=" + strings.Join(dirs, ":"), "HOME=" + home}
+	// a rustup installed somewhere of its own: its proxies need to know where
+	for _, k := range []string{"RUSTUP_HOME", "CARGO_HOME"} {
+		if v := os.Getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
 	if v := os.Getenv("XDG_RUNTIME_DIR"); v != "" {
 		env = append(env, "XDG_RUNTIME_DIR="+v)
 	} else if runtime.GOOS == "linux" {

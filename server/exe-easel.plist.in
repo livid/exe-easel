@@ -22,6 +22,8 @@
 	<dict>
 		<key>PATH</key>
 		<string>@PATH@</string>
+		<key>RUSTUP_HOME</key><string>@RUSTUP_HOME@</string>
+		<key>CARGO_HOME</key><string>@CARGO_HOME@</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

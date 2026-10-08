@@ -5,6 +5,8 @@ After=network.target
 [Service]
 ExecStart=@BIN@ -listen 127.0.0.1:7794 -repo @REPO@ -node @NODE@ -claude @CLAUDE@
 Environment=PATH=@PATH@
+Environment=RUSTUP_HOME=@RUSTUP_HOME@
+Environment=CARGO_HOME=@CARGO_HOME@
 Restart=on-failure
 RestartSec=3
 # painters run in transient units of their own (exe-easel-<studio>); a job a
