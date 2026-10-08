@@ -4,7 +4,7 @@ Easel is an app for the [exe](https://github.com/livid/exe) desktop: oil
 paintings made by Claude painters at a simulated easel, watched live and
 kept, in a Mac OS 9 Platinum window.
 
-![The Easel window: the studios down the left, a finished painting on the Canvas tab](docs/easel-canvas.jpg)
+![The Easel window: the studios down the left, a finished painting on the Canvas tab](docs/easel-fridge-light.jpg)
 
 The simulator is [claude-paint](https://github.com/aliceisjustplaying/claude-paint)
 by Alice (MIT), the engine behind [stillwet.art](https://stillwet.art):
