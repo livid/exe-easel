@@ -89,20 +89,27 @@ func writeJPEG(src, dst string, w, quality int) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	tmp := dst + ".part"
-	f, err := os.Create(tmp)
+	// Each writer has a .part of its own: two requests for one thumbnail at
+	// once used to share one, and the second's rename found it gone.
+	f, err := os.CreateTemp(filepath.Dir(dst), filepath.Base(dst)+".*.part")
 	if err != nil {
 		return err
 	}
-	if err := jpeg.Encode(f, out, &jpeg.Options{Quality: quality}); err != nil {
-		f.Close()
+	tmp := f.Name()
+	err = jpeg.Encode(f, out, &jpeg.Options{Quality: quality})
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Chmod(tmp, 0o644)
+	}
+	if err == nil {
+		err = os.Rename(tmp, dst)
+	}
+	if err != nil {
 		os.Remove(tmp)
-		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
+	return err
 }
 
 // thumbnail returns the path of a cached JPEG copy of the studio file at
