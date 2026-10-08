@@ -221,3 +221,22 @@ func TestViewStartsTheViewsJob(t *testing.T) {
 	}
 	close(release)
 }
+
+func TestLookIn(t *testing.T) {
+	dir := t.TempDir()
+	tool := filepath.Join(dir, "mytool")
+	os.WriteFile(tool, []byte("#!/bin/sh\n"), 0o755)
+	env := []string{"HOME=/x", "PATH=/nowhere:" + dir}
+	if got := lookIn(env, "mytool"); got != tool {
+		t.Fatalf("lookIn = %q, want %q", got, tool)
+	}
+	if got := lookIn(env, "/bin/sh"); got != "/bin/sh" {
+		t.Fatalf("a path stays: %q", got)
+	}
+	if got := lookIn(env, "nothere"); got != "nothere" {
+		t.Fatalf("not found stays: %q", got)
+	}
+	if !killedRe.MatchString("some output\nsignal: terminated") || killedRe.MatchString("replay_clip: too short") {
+		t.Fatal("killedRe")
+	}
+}

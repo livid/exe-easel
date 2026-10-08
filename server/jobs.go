@@ -349,7 +349,10 @@ func (d *Daemon) runJob(st *studioState, kind string, auto bool, work func(ctx c
 			d.Errors.Add("daemon", "error", st.name, what, err.Error(), nil)
 		}
 		st.mu.Unlock()
-		if auto && err != nil && !cancelled {
+		// a job killed from outside (a signal the daemon didn't send: someone
+		// stopping a stray process, a restart) says nothing about the
+		// painting: the heal tries it again rather than wait for the log
+		if auto && err != nil && !cancelled && !killedRe.MatchString(err.Error()) {
 			healFailed(st.dir, kind, err)
 		}
 		close(done)
@@ -566,6 +569,8 @@ func (d *Daemon) PutBrief(st *studioState, text string) error {
 	}
 	return os.WriteFile(filepath.Join(st.dir, "BRIEF.md"), []byte(text), 0o644)
 }
+
+var killedRe = regexp.MustCompile(`(?m)^signal: (terminated|killed|interrupt)$`)
 
 var clipMaxRe = regexp.MustCompile(`come to at most ([0-9.]+) s`)
 

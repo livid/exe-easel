@@ -99,9 +99,10 @@ func (d *Daemon) command(ctx context.Context, st *studioState, logName string, n
 	}
 	defer f.Close()
 	start, _ := f.Seek(0, 2)
-	cmd := exec.CommandContext(ctx, name, args...)
+	env := d.env("TMPDIR=" + os.TempDir())
+	cmd := exec.CommandContext(ctx, lookIn(env, name), args...)
 	cmd.Dir = d.Repo
-	cmd.Env = d.env("TMPDIR=" + os.TempDir())
+	cmd.Env = env
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
@@ -114,6 +115,29 @@ func (d *Daemon) command(ctx context.Context, st *studioState, logName string, n
 		return errors.New(lastLines(string(b)+"\n"+err.Error(), 12))
 	}
 	return nil
+}
+
+// lookIn finds a bare program name on the PATH the child is given (env),
+// not the daemon's own: under systemd that has no ~/.cargo/bin, and Go
+// resolves the name with the parent's PATH ("cargo": executable file not
+// found, the first views heal). A name with a slash, or none found, is
+// returned as it is.
+func lookIn(env []string, name string) string {
+	if strings.Contains(name, "/") {
+		return name
+	}
+	for _, kv := range env {
+		if !strings.HasPrefix(kv, "PATH=") {
+			continue
+		}
+		for _, dir := range filepath.SplitList(kv[len("PATH="):]) {
+			p := filepath.Join(dir, name)
+			if fi, err := os.Stat(p); err == nil && !fi.IsDir() && fi.Mode()&0o111 != 0 {
+				return p
+			}
+		}
+	}
+	return name
 }
 
 // replayChunkRe: the line `easel run` writes after each chunk it replays.
