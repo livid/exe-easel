@@ -20,7 +20,11 @@ func (d *Daemon) Preflight() {
 	env := d.env()
 	if lookIn(env, "ffmpeg") == "" || lookIn(env, "ffprobe") == "" {
 		problems = append(problems, "FFmpeg isn't installed (ffmpeg and ffprobe, with libx264): replays can't be made. macOS: brew install ffmpeg; Debian/Ubuntu: apt install ffmpeg")
-	} else if out, err := exec.Command(lookIn(env, "ffmpeg"), "-hide_banner", "-encoders").Output(); err != nil || !strings.Contains(string(out), "libx264") {
+	} else if out, err := exec.Command(lookIn(env, "ffmpeg"), "-hide_banner", "-encoders").CombinedOutput(); err != nil {
+		// a Homebrew FFmpeg whose libraries were upgraded under it fails to load
+		first := strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0]
+		problems = append(problems, "FFmpeg is installed but doesn't run ("+first+"): replays can't be made. macOS: brew reinstall ffmpeg")
+	} else if !strings.Contains(string(out), "libx264") {
 		problems = append(problems, "FFmpeg has no libx264 encoder: replays can't be made. Install an FFmpeg built with libx264 (Homebrew's and Debian's are)")
 	}
 	if !exists(filepath.Join(d.Engine, "target/release/easel")) {

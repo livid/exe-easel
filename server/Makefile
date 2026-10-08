@@ -35,8 +35,13 @@ check:
 	test -x "$(CLAUDE)" || { echo "missing: Claude Code (claude on PATH, signed in)"; ok=0; }; \
 	command -v cargo >/dev/null && cargo --version | awk '{split($$2,v,"."); exit !(v[1]>1 || v[2]>=84)}' \
 	  || { echo "missing: Rust 1.84 or newer (rustup update): the engine's Cargo.toml uses resolver 3"; ok=0; }; \
-	command -v ffmpeg >/dev/null && command -v ffprobe >/dev/null && ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libx264 \
-	  || { echo "missing: FFmpeg with ffprobe and libx264, for the replays (brew install ffmpeg / apt install ffmpeg)"; ok=0; }; \
+	if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then \
+	  echo "missing: FFmpeg with ffprobe and libx264, for the replays (brew install ffmpeg / apt install ffmpeg)"; ok=0; \
+	elif ! enc=$$(ffmpeg -hide_banner -encoders 2>&1); then \
+	  echo "broken: ffmpeg doesn't run: $$(echo "$$enc" | head -1) (brew reinstall ffmpeg)"; ok=0; \
+	elif ! echo "$$enc" | grep -q libx264; then \
+	  echo "missing: libx264 in FFmpeg, for the replays (an FFmpeg built with it: Homebrew's and Debian's are)"; ok=0; \
+	fi; \
 	test $$ok = 1 && echo "preflight: everything Easel needs is here"
 
 # the engine's replay build, which finishing, replays and the export use
