@@ -1,0 +1,5 @@
+{
+  "title": "Easel",
+  "icon": "icon.svg",
+  "window": { "width": 980, "height": 640, "grow": true }
+}

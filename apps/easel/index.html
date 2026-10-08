@@ -1,0 +1,1526 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Easel</title>
+<link rel="stylesheet" href="/platinum/popup.css">
+<style>
+/* Platinum values match the exe desktop (docs/platinum.md); shared blocks
+   copied whole from Planet (the sidebar, sheets, alert, scrollbars), the
+   desktop (the tab control, the movie controller) and Weather (the
+   disclosure triangle) */
+:root {
+  --black: #262626;
+  --g200: #eee; --g300: #ddd; --g400: #ccc; --g500: #bbb; --g600: #999;
+  --hl: #333399; --red: #cc3333; --green: #1f9e33;
+  --font: "Charcoal", "Chicago", "Geneva", "Lucida Grande", "Lucida Sans", Geneva, Verdana, sans-serif;
+  --mono: "Berkeley Mono", "Monaco", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; font: 12px/1.45 var(--font); color: var(--black); background: var(--g200);
+  user-select: none; cursor: default; overflow: hidden; display: flex; flex-direction: column; }
+
+button { font: inherit; cursor: default; }
+button.ghost { background: var(--g300); color: var(--black);
+  border: 1px solid var(--black); border-radius: 3px;
+  padding: 2px 13px; font-size: 12px; line-height: 14px; font-weight: bold; height: 20px;
+  box-shadow: inset 1px 1px 0 var(--g300), inset -1px -1px 0 #777,
+    inset 2px 2px 0 #fff, inset -2px -2px 0 #aaa; }
+button.ghost:active { background: #666; color: #fff;
+  box-shadow: inset 1px 1px 0 #444, inset -1px -1px 0 #888,
+    inset 2px 2px 0 #555, inset -2px -2px 0 #777; }
+button.ghost:disabled { color: #777; border-color: #888; background: var(--g300); box-shadow: none; }
+button.ghost.default { outline: 2px solid var(--black); outline-offset: 1px; border-radius: 4px; }
+button.ghost.danger { color: #7a1010; }
+
+/* the control row at the dialog guidelines' numbers; on a phone it slides
+   sideways rather than wrap (Paint's row) */
+#bar { display: flex; align-items: center; gap: 12px; padding: 10px 12px; flex: none;
+  overflow-x: auto; scrollbar-width: none; }
+#bar::-webkit-scrollbar { display: none; }
+#bar button { flex: none; }
+#bar .sp { flex: 1; min-width: 0; }
+#bar .gap { width: 4px; flex: none; }
+/* a phone shows the action row as glyphs (the Hub's Find, Refresh): 14px
+   pixel art, whole device pixels at 1x, 2x and 3x, geometricPrecision between */
+#bar .ix { display: none; }
+#bar .ix .k { fill: currentColor; }
+body.mobile #bar button.g { width: 32px; padding: 0; }
+body.mobile #bar button.g .t { display: none; }
+body.mobile #bar button.g .ix { display: block; margin: 0 auto; }
+@media (min-resolution: 1.01dppx) and (max-resolution: 1.99dppx) { #bar .ix { shape-rendering: geometricPrecision; } }
+
+/* two columns: the studios on the window colour (Planet's sidebar), the
+   chosen studio under a tab control; the seam one line, a grip astride it */
+#cols { flex: 1; min-height: 0; display: flex; border-top: 1px solid var(--black); }
+#studios { width: 220px; flex: none; background: var(--g400); border-right: 1px solid var(--black);
+  overflow-y: auto; overflow-x: hidden; padding: 4px 0; outline: none; }
+#studios::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--black); }
+.st { height: 36px; display: flex; align-items: center; gap: 7px; padding: 0 8px; }
+.st .th { width: 36px; height: 27px; flex: none; display: block; border: 1px solid var(--black);
+  background: #fff; object-fit: cover; }
+.st .th.none { background: #fff; }
+.st .tx { flex: 1; min-width: 0; }
+.st .nm { display: flex; align-items: center; gap: 5px; line-height: 15px; }
+.st .nm span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st .sub { font-size: 10px; line-height: 13px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st.sel { background: var(--hl); color: #fff; }
+.st.sel .sub { color: #ddd; }
+/* green means live: the Chat list's 6px pulsing dot while a painter works */
+.dot { width: 6px; height: 6px; border-radius: 3px; flex: none; background: var(--green); display: none; }
+.st.live .dot { display: block; animation: pulse 1.6s ease-in-out infinite; }
+.dot.still { animation: none !important; }
+@keyframes pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .st.live .dot, .ev-pending .dot { animation: none; } }
+#st-empty { padding: 10px; color: #555; font-size: 11px; line-height: 16px; }
+.grip { width: 6px; margin: 0 -3px; flex: none; cursor: col-resize; z-index: 2; touch-action: none; }
+
+#main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 8px 10px 10px; }
+/* the desktop's tab control (Configuration, the Log Viewer) */
+.tabbar { display: flex; align-items: flex-start; padding: 0 4px; position: relative; z-index: 2; flex: none; }
+.tab {
+  height: 22px; color: #000; font-size: 11px; font-weight: bold; line-height: 14px;
+  text-align: center; padding: 0 2px; position: relative; white-space: nowrap;
+  border-style: solid; border-width: 8px 14px 0 14px;
+  border-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='22'><path d='M4.5 23 L11 5.5 Q11.8 1.5 14 1.5 L30 1.5 Q32.2 1.5 33 5.5 L39.5 23' fill='%23ccc' stroke='%23000'/><path d='M6.2 23 L12 5.8 Q12.6 2.5 14 2.5 L29.5 2.5' fill='none' stroke='%23ddd'/><path d='M30 2.5 Q31.6 2.5 32.2 5.8 L37.8 23' fill='none' stroke='%23aaa'/></svg>") 8 14 0 14 fill stretch;
+}
+.tab + .tab { margin-left: -7px; }
+.tab.active {
+  height: 25px; margin-bottom: -3px; z-index: 3;
+  border-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='44' height='25'><path d='M3.8 25 L11 5.5 Q11.8 1.5 14 1.5 L30 1.5 Q32.2 1.5 33 5.5 L40.2 25 Z' fill='%23eee'/><path d='M4.9 22 L11 5.5 Q11.8 1.5 14 1.5 L30 1.5 Q32.2 1.5 33 5.5 L39.1 22' fill='none' stroke='%23000'/><path d='M6.6 22 L12 5.8 Q12.6 2.5 14 2.5 L29.5 2.5' fill='none' stroke='%23fff'/><path d='M30 2.5 Q31.6 2.5 32.2 5.8 L37.4 22' fill='none' stroke='%23bbb'/></svg>") 8 14 0 14 fill stretch;
+}
+.tabpanel { position: relative; border: 1px solid var(--black); background: var(--g200);
+  padding: 10px; flex: 1; min-height: 0; display: flex; flex-direction: column;
+  box-shadow: inset 1px 1px 0 var(--g400), inset 2px 2px 0 #fff, inset -1px -1px 0 var(--g500); }
+/* the panes stack, the hidden ones only invisible, so each keeps its
+   scroll place (display:none would drop it) */
+#panes { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.pane.off { visibility: hidden; }
+.prow { display: flex; align-items: center; gap: 8px; flex: none; min-height: 20px; }
+.prow.top { margin-bottom: 8px; }
+.prow.bot { margin-top: 10px; gap: 12px; }
+.prow .sp { flex: 1; min-width: 0; }
+.prow label { font-size: 11px; }
+.meta { font-size: 11px; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#nosel { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: #777; text-align: center; padding: 0 24px; line-height: 16px; background: var(--g200); z-index: 1; }
+
+/* framed white scrollers (.listbox): the bar's black edge is the frame's
+   right line, its last arrow the 14px borderless cell on the bottom line */
+.box { background: #fff; border: 1px solid var(--black); border-right: 0;
+  box-shadow: -1px -1px 0 var(--g600), 1px 1px 0 #fff; }
+.scroller { flex: 1; min-height: 0; overflow-y: scroll; overflow-x: hidden; position: relative; }
+.scroller::-webkit-scrollbar-button:vertical:end:increment:enabled { height: 14px; border-top: 0; border-bottom: 0; }
+.note { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #777;
+  text-align: center; line-height: 16px; width: max-content; max-width: calc(100% - 32px); pointer-events: none; }
+
+/* Canvas */
+#cv-box { flex: 1; min-height: 0; position: relative; border-right: 1px solid var(--black); overflow: hidden; }
+#cv-img { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px);
+  object-fit: contain; display: block; }
+#cv-img[hidden] { display: none; }
+#cv-busy { position: absolute; right: 8px; top: 8px; font-size: 10px; color: #555; background: rgba(255,255,255,.85);
+  padding: 0 4px; display: none; }
+#cv-busy.on { display: block; }
+
+/* Session: the painter's own record, one row an event */
+#se-list { position: relative; }
+#se-list.f-words .ev-paint, #se-list.f-words .ev-read, #se-list.f-words .ev-tool, #se-list.f-words .ev-think,
+#se-list.f-looks .ev:not(.ev-look) { display: none; }
+.ev { display: flex; gap: 8px; padding: 5px 8px 5px 6px; border-top: 1px solid #e2e2e2; }
+.ev:first-child { border-top: 0; }
+.ev > .t { flex: none; width: 36px; color: #888; font-size: 10px; line-height: 16px; text-align: right;
+  font-variant-numeric: tabular-nums; }
+.ev > .b { flex: 1; min-width: 0; }
+.ev .hd { display: flex; align-items: center; gap: 5px; line-height: 16px; min-width: 0; }
+.ev .hd b { flex: none; }
+.ev .hd .sub { flex: 1; min-width: 0; font: 11px/16px var(--mono); color: #555;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ev pre { margin: 3px 0 0; font: 11px/15px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+  user-select: text; cursor: text; }
+.ev pre.code { background: #f6f6f1; border: 1px solid var(--g500); padding: 4px 6px; }
+.ev pre.rep { color: #555; }
+.ev .err { color: #9a1b1b; }
+.ev code { font: 11px var(--mono); }
+.ev-say .b { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; line-height: 16px; }
+.ev-think .b, .ev-read .b, .ev-tool .hd, .ev-compact .b { color: #888; font-size: 11px; line-height: 16px; }
+.ev-note .q { margin-top: 2px; padding-left: 8px; border-left: 2px solid var(--g600); white-space: pre-wrap;
+  overflow-wrap: anywhere; user-select: text; cursor: text; line-height: 16px; }
+.ev-look .shots { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.ev-look .shots img { display: block; border: 1px solid var(--black); background: var(--g200); height: auto; max-width: 100%; }
+.ev-start .b, .ev-result .b, .ev-limit .b { line-height: 16px; }
+.ev-result { background: #f0f0fa; }
+.ev-result .q { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; margin-top: 2px; }
+.ev-limit .b { color: #9a1b1b; }
+.ev-pending .hd { color: #555; }
+.ev-pending .dot { display: block; animation: pulse 1.6s ease-in-out infinite; }
+/* the Finder list view's disclosure triangle, sampled from Mac OS 9:
+   lavender face, black outline, a one-pixel gray shadow to the lower right */
+.tri { flex: none; width: 12px; height: 12px; background: no-repeat center;
+  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="9" height="12" shape-rendering="crispEdges"><path fill="%23000000" d="M0 0h1v1H0zM0 1h1v1H0zM1 1h1v1H1zM0 2h1v1H0zM2 2h1v1H2zM0 3h1v1H0zM3 3h1v1H3zM0 4h1v1H0zM4 4h1v1H4zM0 5h1v1H0zM5 5h1v1H5zM0 6h1v1H0zM4 6h1v1H4zM0 7h1v1H0zM3 7h1v1H3zM0 8h1v1H0zM2 8h1v1H2zM0 9h1v1H0zM1 9h1v1H1zM0 10h1v1H0z"/><path fill="%23ccccff" d="M1 2h1v1H1zM1 3h1v1H1zM1 4h1v1H1zM1 5h1v1H1zM1 6h1v1H1zM1 7h1v1H1z"/><path fill="%239999ff" d="M2 3h1v1H2zM2 4h1v1H2zM3 4h1v1H3zM2 5h1v1H2zM3 5h1v1H3zM2 6h1v1H2zM1 8h1v1H1z"/><path fill="%236666cc" d="M4 5h1v1H4zM3 6h1v1H3zM2 7h1v1H2z"/><path fill="%23888888" d="M5 6h1v1H5zM4 7h1v1H4zM3 8h1v1H3zM2 9h1v1H2zM1 10h1v1H1z"/><path fill="%23bbbbbb" d="M6 6h1v1H6zM5 7h1v1H5zM4 8h1v1H4zM3 9h1v1H3zM2 10h1v1H2zM1 11h1v1H1z"/></svg>'); }
+.ev.open .tri { background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="9" shape-rendering="crispEdges"><path fill="%23000000" d="M0 0h1v1H0zM1 0h1v1H1zM2 0h1v1H2zM3 0h1v1H3zM4 0h1v1H4zM5 0h1v1H5zM6 0h1v1H6zM7 0h1v1H7zM8 0h1v1H8zM9 0h1v1H9zM10 0h1v1H10zM1 1h1v1H1zM9 1h1v1H9zM2 2h1v1H2zM8 2h1v1H8zM3 3h1v1H3zM7 3h1v1H7zM4 4h1v1H4zM6 4h1v1H6zM5 5h1v1H5z"/><path fill="%23ccccff" d="M2 1h1v1H2zM3 1h1v1H3zM4 1h1v1H4zM5 1h1v1H5zM6 1h1v1H6zM7 1h1v1H7z"/><path fill="%239999ff" d="M8 1h1v1H8zM3 2h1v1H3zM4 2h1v1H4zM5 2h1v1H5zM6 2h1v1H6zM4 3h1v1H4zM5 3h1v1H5z"/><path fill="%23888888" d="M10 1h1v1H10zM9 2h1v1H9zM8 3h1v1H8zM7 4h1v1H7zM6 5h1v1H6z"/><path fill="%23bbbbbb" d="M11 1h1v1H11zM10 2h1v1H10zM9 3h1v1H9zM8 4h1v1H8zM7 5h1v1H7zM6 6h1v1H6z"/><path fill="%236666cc" d="M7 2h1v1H7zM6 3h1v1H6zM5 4h1v1H5z"/></svg>'); }
+.ev .code { display: none; }
+.ev.open .code { display: block; }
+
+/* Journal, Code: printouts */
+#jn, #code { margin: 0; padding: 6px 8px; user-select: text; cursor: text; white-space: pre-wrap; overflow-wrap: anywhere; }
+#jn { font: 12px/16px var(--font); }
+#code { font: 11px/15px var(--mono); }
+#code .ch { display: block; color: #888; border-top: 1px solid var(--g500); margin: 6px 0 2px; padding-top: 2px;
+  font: 10px/14px var(--font); user-select: none; }
+#code .ch:first-child { border-top: 0; margin-top: 0; }
+
+/* Brief and the console's chunk: the sunken field */
+textarea.field { width: 100%; padding: 4px 6px; color: var(--black); background: #fff; border: 1px solid var(--black);
+  border-radius: 0; user-select: text; cursor: text; resize: none; box-shadow: -1px -1px 0 #999, 1px 1px 0 #fff; }
+textarea.field:focus { outline: 2px solid #9999fe; outline-offset: 0; }
+textarea.field:disabled { background: var(--g200); color: #777; }
+#br { flex: 1; min-height: 0; font: 12px/16px var(--font); }
+#ez-in { height: 118px; flex: none; font: 11px/15px var(--mono); margin-top: 8px; }
+#ez-out { padding: 4px 0; }
+.ez { padding: 4px 8px; border-top: 1px solid #e2e2e2; }
+.ez:first-child { border-top: 0; }
+.ez pre { margin: 0; font: 11px/15px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
+.ez pre.in { color: #333399; }
+.ez pre.out { color: #444; }
+.ez pre.err { color: #9a1b1b; }
+.ez img { display: block; margin-top: 4px; border: 1px solid var(--black); max-width: 100%; height: auto; }
+.ez.sys { color: #777; font-size: 11px; line-height: 16px; }
+.check { display: flex; align-items: center; gap: 5px; font-size: 11px; }
+input[type=checkbox] { appearance: none; width: 12px; height: 12px; margin: 0; border: 1px solid var(--black); flex: none;
+  background: #fff; box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #bbb; }
+input[type=checkbox]:checked { background: #fff url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" shape-rendering="crispEdges"><path fill="black" d="M0 0h2v2H0zM2 2h2v2H2zM4 4h2v2H4zM6 2h2v2H6zM8 0h2v2H8zM2 6h2v2H2zM6 6h2v2H6zM0 8h2v2H0zM8 8h2v2H8z"/></svg>') center no-repeat; }
+input[type=checkbox]:disabled { border-color: #888; }
+.check.dis { color: #888; }
+
+/* Replay: the desktop's movie controller, traced from Mac OS 9 (MVQ) */
+#rp-box { flex: 1; min-height: 0; position: relative; background: #000; border: 1px solid var(--black); border-bottom: 0; }
+#rp-box video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; }
+#rp-box .note { color: #aaa; }
+.mv-ctl { position: relative; height: 16px; flex: none; display: flex; border: 1px solid var(--black); border-top: 0; box-sizing: content-box; }
+.mv-ctl svg { display: block; }
+.mv-btn { flex: none; width: 15px; height: 16px; padding: 0; margin: 0; border: 0; background: none; }
+.mv-btn:active { filter: brightness(.82); }
+.mv-sep, .mv-edge, .mv-end { flex: none; width: 1px; }
+.mv-silent .mv-snd, .mv-silent .mv-snd-sep { display: none; }
+.mv-track { flex: 1; position: relative; overflow: hidden; }
+.mv-capl { position: absolute; left: 0; top: 0; }
+.mv-capr { position: absolute; right: 0; top: 0; }
+.mv-thumb { position: absolute; top: 0; left: 0; width: 13px; height: 16px; }
+.mv-ctl.off { pointer-events: none; filter: grayscale(1) opacity(.6); }
+
+/* 15px status bar, text only */
+#status { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--black);
+  background: var(--g300); font-size: 11px; color: #333; padding: 0 20px 0 8px; height: 15px; flex: none;
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.6), inset -1px -1px 0 #aaa; overflow: clip; }
+#st-l { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#st-l.err { color: var(--red); }
+#st-r { flex: none; }
+
+#grow { position: fixed; right: 0; bottom: 0; width: 15px; height: 15px; touch-action: none; z-index: 6; }
+
+/* Mac OS 9 scrollbars — the desktop's pixel-sampled spec (Notes' copy, through Planet) */
+::-webkit-scrollbar { width: 15px; height: 15px; }
+::-webkit-scrollbar-track:vertical { border-left: 1px solid var(--black);
+  background: linear-gradient(to right, #777 0, #777 1px, #888 1px, #888 2px, #aaa 2px, #aaa 12px, #bbb 12px, #bbb 13px, #ccc 13px, #ccc 14px); }
+::-webkit-scrollbar-thumb:vertical { border: 1px solid var(--black); border-right: 0;
+  background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="8" shape-rendering="crispEdges"><rect x="3" y="0" width="1" height="1" fill="%23eeeeee"/><rect x="4" y="0" width="6" height="1" fill="%23ccccff"/><rect x="4" y="1" width="7" height="1" fill="%23333399"/><rect x="3" y="2" width="1" height="1" fill="%23eeeeee"/><rect x="4" y="2" width="6" height="1" fill="%23ccccff"/><rect x="4" y="3" width="7" height="1" fill="%23333399"/><rect x="3" y="4" width="1" height="1" fill="%23eeeeee"/><rect x="4" y="4" width="6" height="1" fill="%23ccccff"/><rect x="4" y="5" width="7" height="1" fill="%23333399"/><rect x="3" y="6" width="1" height="1" fill="%23eeeeee"/><rect x="4" y="6" width="6" height="1" fill="%23ccccff"/><rect x="4" y="7" width="7" height="1" fill="%23333399"/></svg>') center no-repeat,
+    linear-gradient(to right, #ccccff 0 1px, #9999ff 1px 13px, #6666cc 13px 14px);
+  box-shadow: inset 0 1px 0 #ccccff, inset 0 -1px 0 #6666cc; }
+::-webkit-scrollbar-thumb:vertical:active {
+  background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="8" shape-rendering="crispEdges"><rect x="3" y="0" width="1" height="1" fill="%23ccccff"/><rect x="4" y="0" width="6" height="1" fill="%239999ff"/><rect x="4" y="1" width="7" height="1" fill="%23000066"/><rect x="3" y="2" width="1" height="1" fill="%23ccccff"/><rect x="4" y="2" width="6" height="1" fill="%239999ff"/><rect x="4" y="3" width="7" height="1" fill="%23000066"/><rect x="3" y="4" width="1" height="1" fill="%23ccccff"/><rect x="4" y="4" width="6" height="1" fill="%239999ff"/><rect x="4" y="5" width="7" height="1" fill="%23000066"/><rect x="3" y="6" width="1" height="1" fill="%23ccccff"/><rect x="4" y="6" width="6" height="1" fill="%239999ff"/><rect x="4" y="7" width="7" height="1" fill="%23000066"/></svg>') center no-repeat,
+    linear-gradient(to right, #9999ff 0 1px, #6666cc 1px 13px, #333399 13px 14px);
+  box-shadow: inset 0 1px 0 #9999ff, inset 0 -1px 0 #333399; }
+:not(.scrolled-y)::-webkit-scrollbar-thumb:vertical {
+  border-top-color: #ccccff; box-shadow: inset 0 -1px 0 #6666cc; }
+:not(.scrolled-y)::-webkit-scrollbar-thumb:vertical:active {
+  border-top-color: #9999ff; box-shadow: inset 0 -1px 0 #333399; }
+.at-y-end::-webkit-scrollbar-thumb:vertical {
+  border-bottom-color: #6666cc; box-shadow: inset 0 1px 0 #ccccff; }
+.at-y-end::-webkit-scrollbar-thumb:vertical:active {
+  border-bottom-color: #333399; box-shadow: inset 0 1px 0 #9999ff; }
+::-webkit-scrollbar-button { display: block; width: 16px; height: 16px;
+  background: #ddd; border: 1px solid var(--black);
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #bbb;
+  background-position: center; background-repeat: no-repeat; }
+::-webkit-scrollbar-button:vertical { border-right: 0; }
+::-webkit-scrollbar-button:vertical:end:increment:enabled { height: 14px; border-top: 0; border-bottom: 0; }
+::-webkit-scrollbar-button:vertical:decrement {
+  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4" shape-rendering="crispEdges"><path fill="black" d="M3 0h2v1h-2z M2 1h4v1h-4z M1 2h6v1h-6z M0 3h8v1h-8z"/></svg>'); }
+::-webkit-scrollbar-button:vertical:increment {
+  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4" shape-rendering="crispEdges"><path fill="black" d="M0 0h8v1h-8z M1 1h6v1h-6z M2 2h4v1h-4z M3 3h2v1h-2z"/></svg>'); }
+::-webkit-scrollbar-button:active { background-color: #777;
+  box-shadow: inset 1px 1px 0 #555, inset -1px -1px 0 #999; }
+::-webkit-scrollbar-button:vertical:start:decrement,
+::-webkit-scrollbar-button:vertical:start:increment,
+::-webkit-scrollbar-button:horizontal:start:decrement,
+::-webkit-scrollbar-button:horizontal:start:increment { display: none; }
+::-webkit-scrollbar-track:disabled { background: #eee; }
+::-webkit-scrollbar-button:disabled { background-color: #eee; box-shadow: none; border: 0;
+  border-left: 1px solid var(--black); }
+::-webkit-scrollbar-button:vertical:end:increment:disabled { border-top: 1px solid #888; }
+::-webkit-scrollbar-button:vertical:end:decrement:disabled { border-top: 1px solid #555; }
+::-webkit-scrollbar-button:vertical:decrement:disabled {
+  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4" shape-rendering="crispEdges"><path fill="%23888888" d="M3 0h2v1h-2z M2 1h4v1h-4z M1 2h6v1h-6z M0 3h8v1h-8z"/></svg>'); }
+::-webkit-scrollbar-button:vertical:increment:disabled {
+  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="8" height="4" shape-rendering="crispEdges"><path fill="%23888888" d="M0 0h8v1h-8z M1 1h6v1h-6z M2 2h4v1h-4z M3 3h2v1h-2z"/></svg>'); }
+::-webkit-scrollbar-corner { background: var(--g300); }
+
+/* a contextual menu, the desktop's Finder one (Blue Pencil's block) */
+.dropdown { position: fixed; z-index: 30; min-width: 170px; background: var(--g300);
+  border: 1px solid var(--black); padding: 2px 1px;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 var(--g500), 2px 2px 0 rgba(38,38,38,.85); }
+.dd-item { padding: 3px 22px 3px 18px; line-height: 18px; white-space: nowrap; }
+.dd-item:hover { background: var(--hl); color: #fff; }
+.dd-item.dis { color: #888; }
+.dd-item.dis:hover { background: none; color: #888; }
+.dd-sep { height: 2px; margin: 3px 2px; border-top: 1px solid var(--g600); border-bottom: 1px solid #fff; }
+
+/* dialogs and the alert on a veil: the Hub app's blocks, through Planet */
+#veil { position: fixed; inset: 0; background: rgba(0,0,0,.12); display: none;
+  align-items: center; justify-content: center; z-index: 20; }
+#veil.on { display: flex; }
+#dlg { width: 460px; max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); display: flex; flex-direction: column;
+  background: var(--g300); border: 1px solid var(--black); padding: 14px;
+  box-shadow: inset 1px 1px 0 #fff, inset -1px -1px 0 #999, 2px 2px 0 rgba(0,0,0,.25); }
+#dlg h2 { font-size: 12px; margin: 0 0 10px; flex: none; }
+#dlg .row { margin: 0 0 8px; display: flex; flex-direction: column; gap: 3px; }
+#dlg .row.h { flex-direction: row; align-items: center; gap: 5px; }
+#dlg .row.f { flex-direction: row; align-items: center; gap: 8px; flex-wrap: wrap; }
+#dlg .row.f > label { width: 84px; flex: none; text-align: right; align-self: flex-start; line-height: 20px; }
+#dlg .row.f input[type=text], #dlg .row.f .popup, #dlg .row.f textarea { flex: 1; width: auto; min-width: 0; }
+#dlg .row.f input.num { flex: none; width: 64px; }
+#dlg .row.f .hint { flex-basis: 100%; margin-left: 92px; }
+#dlg label { font-size: 11px; }
+#dlg p { margin: 0 0 8px; line-height: 16px; }
+#dlg .btns { display: flex; gap: 12px; justify-content: flex-end; margin-top: 12px; flex: none; }
+#dlg .dlg-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; margin-right: -14px; padding-right: 14px; }
+#dlg .dlg-scroll > .err:last-child { margin-bottom: 0; }
+#dlg .btns .left { margin-right: auto; }
+#dlg .btns button { min-width: 58px; }
+#dlg .err { color: var(--red); font-size: 11px; min-height: 14px; margin-top: 6px; }
+#dlg .hint { color: #666; font-size: 11px; line-height: 14px; }
+#dlg .group { border-top: 1px solid var(--g600); box-shadow: 0 1px 0 #fff inset; margin: 16px 0 0; padding-top: 10px; }
+#dlg input[type=text], #dlg textarea { width: 100%; padding: 2px 5px; font: 12px/16px var(--font); color: var(--black);
+  background: #fff; border: 1px solid var(--black); border-radius: 0; user-select: text; cursor: text;
+  box-shadow: -1px -1px 0 #999, 1px 1px 0 #fff; }
+#dlg input[type=text] { height: 20px; }
+#dlg textarea { height: 64px; resize: none; }
+#dlg textarea.brief { height: 180px; font: 11px/15px var(--mono); }
+/* the brief is Markdown wrapped at about 72 columns: the sheet fits a line */
+#dlg:has(textarea.brief) { width: 640px; }
+#dlg input[type=text]:focus, #dlg textarea:focus { outline: 2px solid #9999fe; outline-offset: 0; }
+#dlg input[type=text]:disabled { background: var(--g200); color: #777; }
+#dlg .row.h label.dis { color: #888; }
+#dlg:has(pre.guide) { width: 640px; height: calc(100vh - 32px); }
+#dlg pre.guide { margin: 0; font: 11px/15px var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; cursor: text; }
+#veil.alert #dlg { display: none; }
+#veil:not(.alert) #alert { display: none; }
+.window { position: relative; z-index: 10; min-width: 220px; width: 100%; max-width: 380px;
+  background: var(--g400); border: 1px solid var(--black); box-shadow: 2px 2px 0 var(--black); }
+.window::before { content: ""; position: absolute; inset: 0; pointer-events: none; z-index: 4; box-sizing: border-box;
+  box-shadow: inset 1px 1px 0 rgba(255,255,255,.5), inset -1px -1px 0 var(--g600), inset 1px 1px 0 #fff; }
+.titlebar { display: flex; align-items: center; gap: 4px; padding: 2px 4px; background: var(--g400); user-select: none; }
+.titlebar .stripe { flex: 1; height: 12px; min-width: 8px; position: relative; background-color: var(--g300);
+  background-image: linear-gradient(#fff, #fff 50%, #777 50%, #777); background-size: 100% 2px; background-repeat: repeat; }
+.titlebar .stripe::before { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; box-sizing: border-box;
+  background-image: linear-gradient(#fff, #fff 50%, #ccc 50%, #ccc); background-size: 100% 2px; background-repeat: repeat; border-bottom: 1px solid #ccc; }
+.titlebar .stripe::after { content: ""; position: absolute; top: 0; bottom: 0; right: 0; width: 1px; box-sizing: border-box;
+  background-image: linear-gradient(#ccc, #ccc 50%, #777 50%, #777); background-size: 100% 2px; background-repeat: repeat; }
+.titlebar.alert-bar { background: #fcc; }
+.titlebar.alert-bar .stripe { background-color: #fcc; background-image: linear-gradient(#fff, #fff 50%, #f66 50%, #f66); }
+.titlebar.alert-bar .stripe::before { background-image: linear-gradient(#fff, #fff 50%, #f99 50%, #f99); border-bottom-color: #f99; }
+.titlebar.alert-bar .stripe::after { background-image: linear-gradient(#f99, #f99 50%, #f66 50%, #f66); }
+.win-body { padding: 14px 14px 12px; }
+#alert { width: min(380px, calc(100vw - 32px)); }
+#alert .a-row { display: flex; gap: 20px; align-items: flex-start; margin-bottom: 24px; }
+#alert .a-row svg { flex: none; }
+#alert .a-text { flex: 1; min-width: 0; user-select: text; cursor: text; }
+#alert #a-detail { margin-top: 6px; font-size: 11px; line-height: 15px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#alert .btns { display: flex; justify-content: flex-end; gap: 12px; }
+#alert .btns button { min-width: 58px; }
+
+/* a phone: the studios, then one studio at a time */
+#back { display: none; }
+body.mobile #back { display: inline-block; }
+body.mobile .grip { display: none; }
+body.mobile #studios, body.mobile #main { display: none; width: 100%; min-width: 0; flex: 1; }
+body.mobile[data-screen="list"] #studios { display: block; border-right: 0; }
+body.mobile[data-screen="studio"] #main { display: flex; }
+body.mobile[data-screen="list"] #back, body.mobile[data-screen="list"] .for-studio { display: none; }
+body.mobile[data-screen="studio"] .for-list { display: none; }
+body.mobile .st { height: 44px; }
+body.mobile .tabbar { flex-wrap: wrap; }
+body.mobile #status { padding-right: 8px; }
+body.mobile #cols { padding-bottom: env(safe-area-inset-bottom); }
+body.mobile #main { padding: 6px 6px 8px; }
+/* the console's row: the two check boxes, then the buttons on a row of their own */
+body.mobile #pane-easel .prow.bot { flex-wrap: wrap; row-gap: 10px; }
+body.mobile #pane-easel .prow.bot .sp { flex-basis: 100%; height: 0; }
+body.mobile #pane-easel .prow.bot .sp ~ button { margin-left: auto; }
+body.mobile #pane-easel .prow.bot .sp ~ button ~ button { margin-left: 0; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <button class="ghost" id="back">Studios</button>
+  <button class="ghost for-list" id="b-new">New Studio…</button>
+  <span class="gap for-list"></span>
+  <button class="ghost for-studio g" id="b-start" data-glyph="start" disabled><span class="t">Start Painter…</span></button>
+  <button class="ghost for-studio g" id="b-stop" data-glyph="stop" disabled><span class="t">Stop</span></button>
+  <button class="ghost for-studio g" id="b-finish" data-glyph="finish" disabled><span class="t">Finish…</span></button>
+  <button class="ghost for-studio g" id="b-clip" data-glyph="clip" disabled><span class="t">Replay…</span></button>
+  <span class="sp"></span>
+  <button class="ghost for-studio g" id="b-save" data-glyph="save" disabled><span class="t">Save to Workspace</span></button>
+</div>
+<div id="cols">
+  <div id="studios" tabindex="0"><div id="st-list"></div><div id="st-empty" hidden></div></div>
+  <div class="grip" data-for="studios"></div>
+  <div id="main">
+    <div class="tabbar" id="tabs">
+      <div class="tab active" data-tab="canvas">Canvas</div>
+      <div class="tab" data-tab="session">Session</div>
+      <div class="tab" data-tab="journal">Journal</div>
+      <div class="tab" data-tab="brief">Brief</div>
+      <div class="tab" data-tab="code">Code</div>
+      <div class="tab" data-tab="easel">Easel</div>
+      <div class="tab" data-tab="replay">Replay</div>
+    </div>
+    <div class="tabpanel">
+      <div id="panes">
+        <div id="nosel">Choose a studio, or make one with New Studio….</div>
+
+        <div class="pane" id="pane-canvas">
+          <div class="prow top">
+            <label for="view">View:</label>
+            <span class="popup" style="width: 168px"><select id="view">
+              <option value="latest">Latest Look</option>
+              <option value="final">Finished</option>
+              <option disabled>──────────</option>
+              <option value="now">Canvas Now</option>
+              <option value="value">Value</option>
+              <option value="squint">Squint</option>
+              <option value="mirror">Mirror</option>
+              <option value="relief">Relief</option>
+              <option value="gallery">Gallery Light</option>
+              <option value="palette">Palette</option>
+            </select><span class="well"><i><b></b></i></span></span>
+            <span class="sp"></span>
+            <span class="meta" id="cv-dims"></span>
+          </div>
+          <div id="cv-box" class="box">
+            <img id="cv-img" alt="" hidden>
+            <div class="note" id="cv-note"></div>
+            <div id="cv-busy">Looking…</div>
+          </div>
+        </div>
+
+        <div class="pane off" id="pane-session">
+          <div class="prow top">
+            <label for="se-show">Show:</label>
+            <span class="popup" style="width: 168px"><select id="se-show">
+              <option value="all">Everything</option>
+              <option value="words">Words and Looks</option>
+              <option value="looks">Looks Only</option>
+            </select><span class="well"><i><b></b></i></span></span>
+            <span class="sp"></span>
+            <span class="meta" id="se-count"></span>
+          </div>
+          <div id="se-list" class="box scroller"></div>
+        </div>
+
+        <div class="pane off" id="pane-journal">
+          <pre id="jn" class="box scroller"></pre>
+        </div>
+
+        <div class="pane off" id="pane-brief">
+          <textarea id="br" class="field" spellcheck="false"></textarea>
+          <div class="prow bot">
+            <span class="meta" id="br-note"></span>
+            <span class="sp"></span>
+            <button class="ghost" id="br-revert" disabled>Revert</button>
+            <button class="ghost" id="br-save" disabled>Save</button>
+          </div>
+        </div>
+
+        <div class="pane off" id="pane-code">
+          <div class="prow top"><span class="meta" id="code-meta"></span></div>
+          <pre id="code" class="box scroller"></pre>
+        </div>
+
+        <div class="pane off" id="pane-easel">
+          <div id="ez-out" class="box scroller"></div>
+          <textarea id="ez-in" class="field" spellcheck="false" placeholder="A chunk of Lua: b = brush{kind=&quot;round&quot;, width=6} …"></textarea>
+          <div class="prow bot">
+            <label class="check" id="ez-scratch-l"><input type="checkbox" id="ez-scratch">Scratch canvas</label>
+            <label class="check" id="ez-look-l"><input type="checkbox" id="ez-autolook" checked>Look after each chunk</label>
+            <span class="sp"></span>
+            <button class="ghost" id="ez-guide">Guide…</button>
+            <button class="ghost" id="ez-close" disabled>Close Easel</button>
+            <button class="ghost" id="ez-look" disabled>Look</button>
+            <button class="ghost" id="ez-run" disabled>Run</button>
+          </div>
+        </div>
+
+        <div class="pane off" id="pane-replay">
+          <div id="rp-box"><video playsinline preload="metadata"></video><div class="note" id="rp-note"></div></div>
+          <div class="mv-ctl off" id="mv">
+            <span class="mv-edge"></span>
+            <button class="mv-btn mv-snd" title="Sound"></button>
+            <span class="mv-sep mv-snd-sep"></span>
+            <button class="mv-btn mv-play" title="Play"></button>
+            <div class="mv-track"><span class="mv-capl"></span><span class="mv-capr"></span><div class="mv-thumb"></div></div>
+            <span class="mv-sep"></span>
+            <button class="mv-btn mv-back" title="Back One Frame"></button>
+            <span class="mv-sep"></span>
+            <button class="mv-btn mv-fwd" title="Forward One Frame"></button>
+            <span class="mv-end"></span>
+          </div>
+          <div class="prow bot">
+            <span class="meta" id="rp-meta"></span>
+            <span class="sp"></span>
+            <button class="ghost" id="rp-save" disabled>Save Movie to Workspace</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="status">
+  <span id="st-l"></span>
+  <span id="st-r"></span>
+</div>
+<div id="veil">
+  <div id="dlg"></div>
+  <div id="alert" class="window" role="alertdialog" aria-labelledby="a-msg" aria-describedby="a-detail">
+    <div class="titlebar alert-bar"><div class="stripe"></div></div>
+    <div class="win-body">
+      <div class="a-row">
+        <svg width="32" height="32" viewBox="0 0 32 32" shape-rendering="crispEdges">
+          <path d="M16 2 L30.5 29.5 L1.5 29.5 Z" fill="#FFDD30" stroke="#000"/>
+          <path d="M16 6 L27 27 L5 27 Z" fill="#FFF3A0"/>
+          <rect x="14" y="11" width="4" height="10" fill="#000"/>
+          <rect x="14" y="23" width="4" height="3" fill="#000"/>
+        </svg>
+        <div class="a-text"><div id="a-msg"></div><div id="a-detail"></div></div>
+      </div>
+      <div class="btns"><button class="ghost" id="a-cancel" hidden>Cancel</button><button class="ghost default" id="a-ok">OK</button></div>
+    </div>
+  </div>
+</div>
+<!-- grow box sampled pixel-for-pixel from Mac OS 9 (Infinite Mac) -->
+<svg id="grow" width="15" height="15" viewBox="0 0 15 15" shape-rendering="crispEdges">
+  <rect width="15" height="15" fill="#ccc"/>
+  <path fill="#000" d="M0 0h15v1H0zM0 1h1v14H0z"/>
+  <path fill="#fff" d="M1 1h14v1H1zM1 2h1v13H1z"/>
+  <path fill="#fff" d="M9 4h2v1H9zM8 5h1v1H8zM7 6h1v1H7zM6 7h1v1H6zM5 8h1v1H5zM4 9h1v1H4zM11 6h2v1h-2zM10 7h1v1h-1zM9 8h1v1H9zM8 9h1v1H8zM7 10h1v1H7zM6 11h1v1H6zM13 8h2v1h-2zM12 9h1v1h-1zM11 10h1v1h-1zM10 11h1v1h-1zM9 12h1v1H9zM8 13h1v1H8z"/>
+  <path fill="#777" d="M10 5h1v1h-1zM9 6h1v1H9zM8 7h1v1H8zM7 8h1v1H7zM6 9h1v1H6zM5 10h1v1H5zM12 7h1v1h-1zM11 8h1v1h-1zM10 9h1v1h-1zM9 10h1v1H9zM8 11h1v1H8zM7 12h1v1H7zM14 9h1v1h-1zM13 10h1v1h-1zM12 11h1v1h-1zM11 12h1v1h-1zM10 13h1v1h-1zM9 14h1v1H9z"/>
+  <path fill="#aaa" d="M4 10h1v1H4zM6 12h1v1H6zM8 14h1v1H8z"/>
+</svg>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+const TOKEN = new URLSearchParams(location.search).get("token") || "";
+const MOBILE = new URLSearchParams(location.search).has("mobile");
+const APP = decodeURIComponent(location.pathname.split("/")[2] || "easel");
+const API = "/v1/svc/art/v1";
+const NAME = /^[a-z0-9][a-z0-9-]{0,47}$/;
+const LS = k => "easel." + k;
+const lsGet = k => { try { return localStorage.getItem(LS(k)); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(LS(k), v); } catch (e) {} };
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers);
+  if (TOKEN) opts.headers["Authorization"] = "Bearer " + TOKEN;
+  opts.cache = "no-store";
+  const r = await fetch(path.startsWith("/v1/svc/") || path.startsWith("/v1/workspace") ? path : API + path, opts);
+  if (!r.ok) {
+    let msg = "HTTP " + r.status;
+    try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {}
+    const err = new Error(msg); err.status = r.status; throw err;
+  }
+  if (r.status === 204) return null;
+  const ct = r.headers.get("content-type") || "";
+  return ct.includes("json") ? r.json() : r.text();
+}
+const json = (method, path, body) => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+const withToken = u => TOKEN ? u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) : u;
+const fileURL = (name, path, w) => withToken(API + "/studios/" + encodeURIComponent(name) + "/files/" + path.split("/").map(encodeURIComponent).join("/") + (w ? "?w=" + w : ""));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const hhmm = ms => { if (!ms) return ""; const d = new Date(ms); return d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"); };
+const fmtWhen = ms => {
+  if (!ms) return "";
+  const d = new Date(ms), now = new Date();
+  return d.toDateString() === now.toDateString() ? hhmm(ms) : d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) + " " + hhmm(ms);
+};
+const fmtNum = n => n >= 1e9 ? (n / 1e9).toFixed(1) + "B" : n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "K" : String(n | 0);
+const plural = (n, w) => n + " " + w + (n === 1 ? "" : "s");
+const DPR = () => Math.min(3, Math.max(1, Math.ceil(window.devicePixelRatio || 1)));
+
+// ---- state ----
+let studios = [];          // the list, newest first
+let sel = null;            // the chosen studio's name
+let detail = null;         // its GET /v1/studios/{name}
+let models = [], efforts = ["low", "medium", "high", "xhigh", "max"], defaults = { model: "claude-opus-5-5", effort: "high", hours: 4 };
+let profiles = [];
+let tab = "canvas";
+let hidden = false;
+const cur = () => studios.find(s => s.name === sel) || null;
+const busy = s => !!s && ["painting", "stopping", "preparing", "finishing", "replaying"].includes(s.state);
+const modelLabel = id => (models.find(m => m.id === id) || {}).label || id || "";
+
+// what each pane holds, so a change reloads only what is shown
+let seEvents = [], seNext = 0, seLoaded = false, seFor = null, seLoading = false, seAgain = false;
+let jnFor = null, jnStamp = -1, codeFor = null, codeStamp = -1;
+let briefFor = null, briefText = "";
+let view = "latest", shownURL = "", shownFor = null, lookSeq = 0;
+
+// ---- the studio list ----
+function stateWords(s) {
+  switch (s.state) {
+    case "preparing": return "Setting up…";
+    case "painting": return "Painting" + (s.clock ? " · " + s.clock : "");
+    case "stopping": return "Stopping…";
+    case "finishing": return "Varnishing…";
+    case "replaying": return "Making the replay…";
+    case "failed": return "Failed";
+  }
+  if (!s.chunks) return s.started ? "Stopped before painting" : "Not started";
+  if (s.final) return "Finished · " + plural(s.chunks, "chunk");
+  if (s.ended && s.exit === 0 && s.title) return "Painted · " + plural(s.chunks, "chunk");
+  return (s.ended ? "Stopped" : "Idle") + " · " + plural(s.chunks, "chunk");
+}
+function thumbURL(s) {
+  if (s.final) return fileURL(s.name, "out/final.jpg", 36 * DPR());
+  return s.latest ? fileURL(s.name, s.latest, 36 * DPR()) : "";
+}
+function rowFor(s) {
+  let row = $(`#st-list .st[data-name="${s.name}"]`);
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "st"; row.dataset.name = s.name;
+    row.innerHTML = `<img class="th" alt=""><div class="tx"><div class="nm"><i class="dot"></i><span></span></div><div class="sub"></div></div>`;
+    row.addEventListener("click", () => selectStudio(s.name, true));
+  }
+  row.classList.toggle("sel", s.name === sel);
+  row.classList.toggle("live", s.state === "painting");
+  row.querySelector(".nm span").textContent = s.title || s.name;
+  row.title = s.title ? s.name : "";
+  row.querySelector(".sub").textContent = stateWords(s);
+  const img = row.querySelector(".th"), src = thumbURL(s);
+  if (img.dataset.src !== src) {
+    img.dataset.src = src;
+    if (src) { const pre = new Image(); pre.onload = () => { if (img.dataset.src === src) img.src = src; }; pre.src = src; }
+    else img.removeAttribute("src");
+  }
+  return row;
+}
+function renderList() {
+  const list = $("#st-list");
+  const rows = studios.map(rowFor);
+  rows.forEach((r, i) => { if (list.children[i] !== r) list.insertBefore(r, list.children[i] || null); });
+  while (list.children.length > rows.length) list.lastChild.remove();
+  const empty = $("#st-empty");
+  empty.hidden = studios.length > 0;
+  empty.textContent = "No studios yet. New Studio… sets one up: an easel, a box of tubes and a brief for the painter.";
+}
+async function loadStudios() {
+  const r = await api("/studios");
+  const was = studios;
+  studios = r.studios || [];
+  renderList();
+  const keep = sel || lsGet("sel");
+  if (keep && studios.some(s => s.name === keep)) await selectStudio(keep, false);
+  else if (!MOBILE && studios.length) await selectStudio(studios[0].name, false);
+  else showStudio();
+  // a reload after the stream was down is a change like any other: a job
+  // that ended meanwhile still says how it went
+  const before = was.find(s => s.name === sel), after = cur();
+  if (before && after && JSON.stringify(before) !== JSON.stringify(after)) studioChanged(before, after);
+  for (const s of studios) maybeStartPending(s);
+}
+function upsert(s) {
+  const i = studios.findIndex(x => x.name === s.name);
+  const before = i >= 0 ? studios[i] : null;
+  if (i >= 0) studios[i] = s; else { studios.push(s); studios.sort((a, b) => (b.created || 0) - (a.created || 0)); }
+  renderList();
+  if (s.name === sel) studioChanged(before, s);
+}
+
+// ---- the chosen studio ----
+async function selectStudio(name, user) {
+  if (sel !== name) {
+    sel = name; lsSet("sel", name);
+    detail = null;
+    seEvents = []; seNext = 0; seLoaded = false; seFor = null; $("#se-list").textContent = "";
+    jnFor = null; codeFor = null; briefFor = null;
+    const s0 = studios.find(x => x.name === name);
+    view = s0 && s0.final ? "final" : "latest"; $("#view").value = view; shownURL = ""; shownFor = null;
+    $("#cv-img").hidden = true; $("#cv-img").removeAttribute("src");
+    resetConsole();
+    resetReplay();
+    renderList();
+  }
+  if (MOBILE && user) screen("studio");
+  showStudio();
+  try { detail = await api("/studios/" + encodeURIComponent(name)); } catch (e) { setStatus(e.message, true); return; }
+  if (sel !== name) return;
+  showStudio();
+}
+// what shows for the chosen studio: the bar, the status line, the open pane
+function showStudio() {
+  const s = cur();
+  $("#nosel").hidden = !!s;
+  $("#nosel").textContent = studios.length ? "Choose a studio." : "No studios yet. New Studio… sets one up.";
+  const can = s && !busy(s) && s.state !== "failed";
+  $("#b-start").disabled = !can;
+  $("#b-stop").disabled = !s || s.state !== "painting";
+  $("#b-finish").disabled = !can || !s.chunks;
+  $("#b-clip").disabled = !can || !s.chunks;
+  $("#b-save").disabled = !s || (!s.final && !s.latest);
+  renderStatus();
+  if (s) loadPane(tab);
+}
+function studioChanged(before, s) {
+  showStudio();
+  if (detail && before && (before.updated !== s.updated || before.state !== s.state)) {
+    api("/studios/" + encodeURIComponent(s.name)).then(d => { if (sel === s.name) { detail = d; if (tab === "brief") loadBrief(); } }).catch(() => {});
+  }
+}
+function renderStatus() {
+  const s = cur();
+  const l = $("#st-l"), r = $("#st-r");
+  l.classList.remove("err");
+  if (!s) { l.textContent = studios.length ? plural(studios.length, "studio") + " · " + studios.filter(x => x.state === "painting").length + " painting" : ""; r.textContent = ""; return; }
+  const bits = [];
+  if (s.state === "failed" || s.error) { l.classList.add("err"); bits.push(s.error || "Failed"); }
+  else if (s.state === "painting") bits.push("Painting since " + fmtWhen(s.started) + (s.model ? " · " + modelLabel(s.model) : ""));
+  else if (s.job) bits.push(stateWords(s));
+  else if (s.ended) bits.push((s.exit === 0 && s.title ? "The painter finished " : "Stopped ") + fmtWhen(s.ended) + (s.exit ? " (exit " + s.exit + ")" : "") + (s.model ? " · " + modelLabel(s.model) : ""));
+  else bits.push(stateWords(s));
+  if (s.clock && s.state !== "painting") bits.push(s.clock);
+  l.textContent = bits.join(" · ");
+  const t = s.tokens || {};
+  const tok = (t.input || 0) + (t.output || 0) + (t.cache_read || 0) + (t.cache_write || 0);
+  r.textContent = [plural(s.chunks || 0, "chunk"), plural(s.looks || 0, "look"), tok ? fmtNum(tok) + " tokens" : ""].filter(Boolean).join(" · ");
+}
+function setStatus(text, err) {
+  const l = $("#st-l"); l.textContent = text; l.classList.toggle("err", !!err);
+}
+
+// ---- tabs ----
+function showTab(t) {
+  tab = t; lsSet("tab", t);
+  $$("#tabs .tab").forEach(x => x.classList.toggle("active", x.dataset.tab === t));
+  $$(".pane").forEach(p => p.classList.toggle("off", p.id !== "pane-" + t));
+  if (cur()) loadPane(t);
+}
+$$("#tabs .tab").forEach(t => t.addEventListener("click", () => showTab(t.dataset.tab)));
+function loadPane(t) {
+  const s = cur(); if (!s) return;
+  if (t === "canvas") renderCanvas();
+  else if (t === "session") loadSession();
+  else if (t === "journal") loadJournal();
+  else if (t === "brief") loadBrief();
+  else if (t === "code") loadCode();
+  else if (t === "easel") renderConsole();
+  else if (t === "replay") loadReplay();
+}
+
+// ---- Canvas: the latest look, the finished picture, or a look of our own ----
+const EASEL_VIEWS = new Set(["now", "value", "squint", "mirror", "relief", "gallery", "palette"]);
+function renderCanvas() {
+  const s = cur(); if (!s) return;
+  const opt = v => $(`#view option[value="${v}"]`);
+  opt("final").disabled = !s.final;
+  for (const v of EASEL_VIEWS) opt(v).disabled = busy(s) || !s.chunks;
+  if ((view === "final" && !s.final) || (EASEL_VIEWS.has(view) && (busy(s) || !s.chunks))) { view = s.final && !s.latest ? "final" : "latest"; $("#view").value = view; }
+  const note = $("#cv-note");
+  if (view === "latest") {
+    if (s.latest) { const c = s.canvas || {}; showImage(fileURL(s.name, s.latest), c.w, c.h, "Latest look" + (s.clock ? " · " + s.clock : "")); note.textContent = ""; }
+    else if (s.final) { view = "final"; $("#view").value = "final"; return renderCanvas(); }
+    else { clearImage(); note.textContent = s.state === "painting" ? "The painter hasn’t looked at the canvas yet." : s.chunks ? "No look yet: choose Canvas Now to see it." : "Nothing on the canvas yet."; }
+  } else if (view === "final") {
+    showImage(fileURL(s.name, "out/final.jpg"), 0, 0, "Finished: dried, varnished and cracked");
+    note.textContent = "";
+  } else if (shownFor !== s.name + "|" + view) {
+    easelLook(view);
+  }
+}
+function clearImage() { const img = $("#cv-img"); img.hidden = true; img.removeAttribute("src"); shownURL = ""; $("#cv-dims").textContent = ""; }
+// the new picture loads beside the old and takes its place when it is
+// there: the box keeps its size, so nothing moves
+function showImage(url, w, h, words) {
+  const img = $("#cv-img");
+  $("#cv-dims").textContent = words + (w ? " · " + w + " × " + h : "");
+  if (shownURL === url) return;
+  shownURL = url;
+  const pre = new Image();
+  pre.onload = () => {
+    if (shownURL !== url) return;
+    img.src = url; img.hidden = false;
+    if (!w) $("#cv-dims").textContent = words + " · " + pre.naturalWidth + " × " + pre.naturalHeight;
+  };
+  pre.onerror = () => { if (shownURL === url) $("#cv-note").textContent = "This picture didn’t load."; };
+  pre.src = url;
+}
+async function easelLook(v) {
+  const s = cur(), name = s.name, seq = ++lookSeq;
+  const busyEl = $("#cv-busy"); busyEl.classList.add("on");
+  try {
+    const body = v === "palette" ? { palette: true } : v === "now" ? {} : { mode: v };
+    const r = await json("POST", "/studios/" + encodeURIComponent(name) + "/look", body);
+    if (seq !== lookSeq || sel !== name) return;
+    shownFor = name + "|" + v;
+    const label = $(`#view option[value="${v}"]`).textContent;
+    if (r.images && r.images[0]) showImage(fileURL(name, r.images[0]), r.w, r.h, label);
+    $("#cv-note").textContent = "";
+  } catch (e) {
+    if (seq === lookSeq) { $("#cv-note").textContent = ""; alertBox("The easel couldn’t show that view.", e.message); view = "latest"; $("#view").value = "latest"; renderCanvas(); }
+  } finally { if (seq === lookSeq) busyEl.classList.remove("on"); }
+}
+$("#view").addEventListener("change", e => { view = e.target.value; shownFor = null; renderCanvas(); });
+// a click hands the picture at full size to the desktop's PictureViewer
+$("#cv-img").addEventListener("click", () => {
+  const s = cur(); if (!s || !shownURL) return;
+  const full = shownURL.includes("out/final.jpg") ? fileURL(s.name, "out/final.png") : shownURL;
+  const abs = new URL(full, location.href).href;
+  if (window.parent !== window) parent.postMessage({ exe: "view-image", url: abs, name: (s.title || s.name) + ".png" }, location.origin);
+  else window.open(abs, "_blank");
+});
+
+// ---- Session: the painter's record ----
+async function loadSession() {
+  const s = cur(); if (!s) return;
+  if (seLoading) { seAgain = true; return; }
+  if (seFor !== s.name) { seFor = s.name; seEvents = []; seNext = 0; $("#se-list").textContent = ""; seLoaded = false; }
+  seLoading = true;
+  const name = s.name;
+  try {
+    const r = await api("/studios/" + encodeURIComponent(name) + "/session?after=" + seNext);
+    if (sel !== name || seFor !== name) return;
+    const list = $("#se-list");
+    const follow = !seLoaded || list.scrollTop >= list.scrollHeight - list.clientHeight - 8;
+    $("#se-pending")?.remove();
+    const frag = document.createDocumentFragment();
+    for (const ev of r.events || []) { seEvents.push(ev); const row = evRow(ev, name); if (row) frag.append(row); }
+    list.append(frag);
+    if (r.pending && s.state === "painting") list.append(pendingRow(r.pending));
+    seNext = Math.max(seNext, r.next || 0);
+    if (!list.children.length) list.innerHTML = `<div class="note">${s.started ? "The session has no events yet." : "No painter has worked here yet. Start Painter… sets one to work."}</div>`;
+    else list.querySelector(":scope > .note")?.remove();
+    if (follow) list.scrollTop = list.scrollHeight;
+    seLoaded = true;
+    $("#se-count").textContent = plural(seEvents.length, "event");
+  } catch (e) {
+    setStatus("Session: " + e.message, true);
+  } finally { seLoading = false; if (seAgain) { seAgain = false; loadSession(); } }
+}
+function lookArgs(a) {
+  if (!a) return "";
+  const bits = [];
+  if (a.palette) bits.push("palette");
+  if (a.survey) bits.push("survey");
+  if (a.crop) bits.push("crop " + a.crop);
+  if (a.mode) bits.push(a.mode);
+  if (a.hold) bits.push("hold " + a.hold + (a.at ? " at " + a.at : ""));
+  if (a.compare) bits.push("compare");
+  if (a.size) bits.push(a.size + " px");
+  if (a.grid) bits.push("grid");
+  if (a.light) bits.push("light " + a.light);
+  if (a.scratch) bits.push("scratch");
+  return bits.join(" · ") || "the whole canvas";
+}
+function firstLine(lua) {
+  const lines = String(lua || "").split("\n").map(l => l.trim()).filter(Boolean);
+  return lines.find(l => !l.startsWith("--")) || lines[0] || "";
+}
+// the painter writes Markdown: bold and code spans read as such, the rest as it is
+const inline = t => esc(t).replace(/\*\*([^*\n]+?)\*\*/g, "<b>$1</b>").replace(/`([^`\n]+)`/g, '<code>$1</code>');
+function evRow(ev, name) {
+  const row = document.createElement("div");
+  row.className = "ev ev-" + ev.kind;
+  const t = `<span class="t">${esc(hhmm(ev.t))}</span>`;
+  const err = ev.error ? `<pre class="err">${esc(ev.error)}</pre>` : "";
+  switch (ev.kind) {
+    case "start":
+      row.innerHTML = t + `<div class="b"><b>Sitting begins</b>${ev.model ? " · " + esc(modelLabel(ev.model)) : ""}</div>`; break;
+    case "say":
+      row.innerHTML = t + `<div class="b">${inline(ev.text)}</div>`; break;
+    case "think":
+      row.innerHTML = t + `<div class="b">${ev.text ? esc(ev.text) : "Thought" + (ev.ms >= 1000 ? " for " + Math.round(ev.ms / 1000) + " s" : "")}</div>`; break;
+    case "paint": {
+      const lines = String(ev.lua || "").split("\n").length;
+      row.innerHTML = t + `<div class="b"><div class="hd"><i class="tri"></i><b>${ev.scratch ? "Paint (scratch)" : "Paint"}</b><span class="sub"></span></div>` +
+        `<pre class="code"></pre>${ev.reply ? `<pre class="rep">${esc(ev.reply)}</pre>` : ""}${err}</div>`;
+      row.querySelector(".sub").textContent = firstLine(ev.lua) + (lines > 1 ? "  (" + lines + " lines)" : "");
+      row.querySelector(".code").textContent = ev.lua || "";
+      row.querySelector(".hd").addEventListener("click", () => row.classList.toggle("open"));
+      break;
+    }
+    case "look": {
+      row.innerHTML = t + `<div class="b"><div class="hd"><b>Look</b><span class="sub"></span></div><div class="shots"></div>${err}</div>`;
+      row.querySelector(".sub").textContent = lookArgs(ev.args);
+      const shots = row.querySelector(".shots");
+      const many = (ev.images || []).length > 1;
+      for (const p of ev.images || []) {
+        const img = document.createElement("img");
+        const w = ev.w || 1000, h = ev.h || 700, tw = Math.min(many ? 150 : 300, w);
+        img.width = tw; img.height = Math.round(tw * h / w);
+        img.loading = "lazy"; img.alt = "";
+        img.src = fileURL(name, p, tw * DPR());
+        img.addEventListener("click", () => { if (!many && !ev.args?.palette && !ev.args?.scratch) { view = "latest"; $("#view").value = "latest"; } showTab("canvas"); showImage(fileURL(name, p), ev.w, ev.h, "Look at " + hhmm(ev.t) + " · " + lookArgs(ev.args)); });
+        shots.append(img);
+      }
+      break;
+    }
+    case "note":
+      row.innerHTML = t + `<div class="b"><div class="hd"><b>${ev.replaces ? "Journal (revised)" : "Journal"}</b></div><div class="q"></div>${err}</div>`;
+      row.querySelector(".q").textContent = ev.text || ""; break;
+    case "read":
+      row.innerHTML = t + `<div class="b">Read ${esc(ev.path || "")}${ev.error ? " — " + esc(ev.error) : ""}</div>`; break;
+    case "tool":
+      row.innerHTML = t + `<div class="b"><div class="hd"><i class="tri"></i><span>${esc(ev.name || "tool")}</span></div><pre class="code"></pre>${err}</div>`;
+      row.querySelector(".code").textContent = ev.reply || "";
+      row.querySelector(".hd").addEventListener("click", () => row.classList.toggle("open"));
+      break;
+    case "compact":
+      row.innerHTML = t + `<div class="b">The conversation was condensed; the painter carries on from a summary.</div>`; break;
+    case "result":
+      row.innerHTML = t + `<div class="b"><b>${ev.error ? "The sitting ended with an error" : "The sitting ends"}</b>` +
+        `${ev.turns ? " · " + plural(ev.turns, "turn") : ""}${ev.cost_usd ? " · $" + ev.cost_usd.toFixed(2) : ""}<div class="q"></div>${err}</div>`;
+      {
+        // the run's final message is the painter's last words, already shown above
+        const last = [...seEvents].reverse().find(e => e.kind === "say" && e.seq < ev.seq);
+        const q = row.querySelector(".q");
+        if (ev.text && (!last || last.text.trim() !== ev.text.trim())) q.innerHTML = inline(ev.text); else q.remove();
+      }
+      break;
+    case "limit":
+      row.innerHTML = t + `<div class="b">${esc(ev.text || "A usage limit was reached.")}</div>`; break;
+    default: return null;
+  }
+  return row;
+}
+function pendingRow(p) {
+  const row = document.createElement("div");
+  row.className = "ev ev-pending"; row.id = "se-pending";
+  const what = p.kind === "paint" ? "Painting: " + firstLine(p.lua) : p.kind === "look" ? "Looking: " + lookArgs(p.args) : p.kind === "note" ? "Writing in the journal" : p.kind === "read" ? "Reading " + (p.path || "") : "At the easel";
+  row.innerHTML = `<span class="t"></span><div class="b"><div class="hd"><i class="dot"></i><span class="sub"></span></div></div>`;
+  row.querySelector(".sub").textContent = what;
+  return row;
+}
+$("#se-show").addEventListener("change", e => {
+  const list = $("#se-list");
+  list.classList.toggle("f-words", e.target.value === "words");
+  list.classList.toggle("f-looks", e.target.value === "looks");
+  lsSet("show", e.target.value);
+});
+
+// ---- Journal and Code: files read as text ----
+async function loadText(path) {
+  const s = cur();
+  try { return await api(API + "/studios/" + encodeURIComponent(s.name) + "/files/" + path); }
+  catch (e) { if (e.status === 404) return null; throw e; }
+}
+async function loadJournal() {
+  const s = cur(); if (!s || (jnFor === s.name && jnStamp === s.updated)) return;
+  const name = s.name, stamp = s.updated;
+  const pre = $("#jn"), atEnd = pre.scrollTop >= pre.scrollHeight - pre.clientHeight - 8;
+  try {
+    const t = await loadText("notes/journal.md");
+    if (sel !== name) return;
+    const keep = jnFor === name ? pre.scrollTop : null;
+    pre.textContent = t && t.trim() ? t : "";
+    if (!pre.textContent) pre.innerHTML = `<div class="note">The journal is empty.</div>`;
+    jnFor = name; jnStamp = stamp;
+    if (keep === null || atEnd) pre.scrollTop = pre.scrollHeight; else pre.scrollTop = keep;
+  } catch (e) { setStatus("Journal: " + e.message, true); }
+}
+async function loadCode() {
+  const s = cur(); if (!s || (codeFor === s.name && codeStamp === s.chunks)) return;
+  const name = s.name, stamp = s.chunks;
+  const pre = $("#code"), atEnd = pre.scrollTop >= pre.scrollHeight - pre.clientHeight - 8;
+  try {
+    const t = await loadText("paintings/lua/painting.lua");
+    if (sel !== name) return;
+    const keep = codeFor === name ? pre.scrollTop : null;
+    pre.textContent = "";
+    if (!t) { pre.innerHTML = `<div class="note">No chunk has run yet.</div>`; $("#code-meta").textContent = ""; }
+    else {
+      const frag = document.createDocumentFragment();
+      let n = 0, buf = [];
+      const flush = () => { const text = buf.join("\n").replace(/^\n+|\n+$/g, ""); if (text) frag.append(document.createTextNode(text + "\n")); buf = []; };
+      for (const line of t.split("\n")) {
+        const m = /^--@ chunk\b/.exec(line);
+        if (m) { flush(); const h = document.createElement("span"); h.className = "ch"; h.textContent = "Chunk " + (++n); frag.append(h); }
+        else buf.push(line);
+      }
+      flush();
+      pre.append(frag);
+      $("#code-meta").textContent = plural(n, "chunk") + " · paintings/lua/painting.lua · the log is the painting: replaying it paints the same canvas";
+    }
+    codeFor = name; codeStamp = stamp;
+    if (keep === null || atEnd) pre.scrollTop = pre.scrollHeight; else pre.scrollTop = keep;
+  } catch (e) { setStatus("Code: " + e.message, true); }
+}
+
+// ---- Brief ----
+function loadBrief() {
+  const s = cur(); if (!s || !detail || detail.name !== s.name) return;
+  const ta = $("#br");
+  const dirty = briefFor === s.name && ta.value !== briefText;
+  if (briefFor !== s.name || (!dirty && briefText !== detail.brief)) { briefFor = s.name; briefText = detail.brief || ""; ta.value = briefText; }
+  const locked = busy(s);
+  ta.disabled = locked;
+  $("#br-note").textContent = locked ? "The brief can’t change while the painter works." : s.started ? "A changed brief reaches the painter only if it reads BRIEF.md again." : "What the painter reads first.";
+  briefButtons();
+}
+function briefButtons() {
+  const s = cur(), dirty = $("#br").value !== briefText;
+  $("#br-save").disabled = !s || busy(s) || !dirty;
+  $("#br-revert").disabled = !dirty;
+  $("#br-save").classList.toggle("default", dirty);
+}
+$("#br").addEventListener("input", briefButtons);
+$("#br-revert").addEventListener("click", () => { $("#br").value = briefText; briefButtons(); });
+$("#br-save").addEventListener("click", async () => {
+  const s = cur(), text = $("#br").value;
+  try { await json("PUT", "/studios/" + encodeURIComponent(s.name) + "/brief", { text }); briefText = text; if (detail) detail.brief = text; briefButtons(); setStatus("Brief saved."); }
+  catch (e) { alertBox("The brief wasn’t saved.", e.message); }
+});
+
+// ---- Easel: a hand at the easel ----
+function resetConsole() { $("#ez-out").textContent = ""; }
+function ezLine(cls, text, img) {
+  const out = $("#ez-out");
+  const atEnd = out.scrollTop >= out.scrollHeight - out.clientHeight - 8;
+  const d = document.createElement("div");
+  if (cls === "sys") { d.className = "ez sys"; d.textContent = text; }
+  else { d.className = "ez"; for (const [c, t] of cls) { const p = document.createElement("pre"); p.className = c; p.textContent = t; d.append(p); } }
+  if (img) d.append(img);
+  out.append(d);
+  if (atEnd) out.scrollTop = out.scrollHeight;
+}
+function renderConsole() {
+  const s = cur(); if (!s) return;
+  const locked = busy(s) || s.state === "failed";
+  for (const id of ["#ez-run", "#ez-look", "#ez-in", "#ez-scratch", "#ez-autolook"]) $(id).disabled = locked;
+  $("#ez-close").disabled = locked;
+  $("#ez-scratch-l").classList.toggle("dis", locked); $("#ez-look-l").classList.toggle("dis", locked);
+  if (!$("#ez-out").children.length) {
+    ezLine("sys", locked ? "The painter is at the easel. This console opens when it stops."
+      : "Paint by hand: each chunk of Lua runs at this studio’s easel and joins the log, as a painter’s would. Guide… explains the calls; Run is Ctrl+Return.");
+  }
+}
+async function ezRun() {
+  const s = cur(), lua = $("#ez-in").value;
+  if (!s || !lua.trim() || $("#ez-run").disabled) return;
+  const scratch = $("#ez-scratch").checked;
+  $("#ez-run").disabled = true;
+  ezLine([["in", lua.trim()]]);
+  try {
+    const r = await json("POST", "/studios/" + encodeURIComponent(s.name) + "/do", { lua, scratch });
+    ezLine([["out", (r.reply || "").trim()]]);
+    if ($("#ez-autolook").checked) await ezLook(true);
+  } catch (e) { ezLine([["err", e.message]]); }
+  finally { $("#ez-run").disabled = busy(cur()); }
+}
+async function ezLook(quiet) {
+  const s = cur(); if (!s) return;
+  const scratch = $("#ez-scratch").checked;
+  try {
+    const r = await json("POST", "/studios/" + encodeURIComponent(s.name) + "/look", scratch ? { scratch: true } : {});
+    if (r.images && r.images[0]) {
+      const img = document.createElement("img"), w = r.w || 1000, h = r.h || 700, tw = Math.min(360, w);
+      img.width = tw; img.height = Math.round(tw * h / w); img.alt = "";
+      img.src = fileURL(s.name, r.images[0], tw * DPR());
+      ezLine(quiet ? "sys" : [["out", "look"]], quiet ? "" : null, img);
+      shownFor = null; if (!scratch && view === "now") renderCanvas();
+    }
+  } catch (e) { ezLine([["err", e.message]]); }
+}
+$("#ez-run").addEventListener("click", ezRun);
+// the studio's own easel guide, the one its painter reads
+$("#ez-guide").addEventListener("click", async () => {
+  const s = cur(); if (!s) return;
+  let text;
+  try { text = await loadText("notes/easel_guide.md"); } catch (e) { alertBox("The guide didn’t load.", e.message); return; }
+  dialog(`<h2>The Easel Guide</h2><pre class="guide"></pre><div class="btns"><button class="ghost default" id="d-ok">OK</button></div>`, () => true);
+  $("#dlg pre.guide").textContent = text || "This studio has no guide.";
+});
+$("#ez-look").addEventListener("click", () => ezLook(false));
+$("#ez-close").addEventListener("click", async () => {
+  const s = cur(); if (!s) return;
+  try { await api("/studios/" + encodeURIComponent(s.name) + "/close", { method: "POST" }); ezLine("sys", "The easel is closed; the log keeps the painting."); }
+  catch (e) { ezLine([["err", e.message]]); }
+});
+$("#ez-in").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); ezRun(); } });
+$("#ez-in").addEventListener("input", () => { const s = cur(); $("#ez-run").disabled = !s || busy(s) || !$("#ez-in").value.trim(); });
+
+// ---- Replay: the desktop's movie controller (MVQ), traced from Mac OS 9 ----
+const MVQ = {
+  edge: `<svg width="1" height="16" viewBox="0 0 1 16" shape-rendering="crispEdges"><rect width="1" height="16" fill="#999"/><path fill="#777" d="M0 1h1v1h-1zM0 15h1v1h-1z"/><path fill="#888" d="M0 2h1v1h-1zM0 6h1v1h-1z"/><path fill="#aaa" d="M0 9h1v1h-1zM0 10h1v1h-1z"/><path fill="#bbb" d="M0 11h1v1h-1zM0 12h1v1h-1zM0 13h1v1h-1zM0 14h1v1h-1z"/></svg>`,
+  snd: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#fff"/><path fill="#999" d="M0 0h15v1h-15zM5 5h1v1h-1zM5 9h1v1h-1zM11 9h1v1h-1z"/><path fill="#bbb" d="M0 1h15v1h-15zM7 3h1v1h-1zM12 4h1v1h-1zM11 6h1v1h-1zM11 8h1v1h-1zM6 10h1v1h-1z"/><path fill="#ddd" d="M0 2h15v1h-15zM0 3h7v1h-7zM9 3h6v1h-6zM0 4h6v1h-6zM9 4h1v1h-1zM13 4h2v1h-2zM0 5h5v1h-5zM9 5h2v1h-2zM13 5h2v1h-2zM0 6h3v1h-3zM9 6h1v1h-1zM13 6h2v1h-2zM0 7h3v1h-3zM9 7h1v1h-1zM11 7h1v1h-1zM13 7h2v1h-2zM10 10h1v1h-1z"/><path fill="#000" d="M8 3h1v1h-1zM7 4h2v1h-2zM6 5h3v1h-3zM3 6h6v1h-6zM10 6h1v1h-1zM3 7h6v1h-6zM10 7h1v1h-1zM12 7h1v1h-1zM3 8h6v1h-6zM10 8h1v1h-1zM6 9h3v1h-3zM7 10h2v1h-2zM8 11h1v1h-1z"/><path fill="#aaa" d="M6 4h1v1h-1z"/><path fill="#ccc" d="M10 4h1v1h-1zM12 10h1v1h-1zM7 11h1v1h-1z"/><path fill="#444" d="M11 4h1v1h-1z"/><path fill="#888" d="M11 5h1v1h-1z"/><path fill="#555" d="M12 5h1v1h-1zM12 9h1v1h-1zM11 10h1v1h-1z"/><path fill="#111" d="M12 6h1v1h-1z"/><path fill="#eee" d="M0 8h3v1h-3zM9 8h1v1h-1zM13 8h2v1h-2zM0 9h5v1h-5zM9 9h2v1h-2zM13 9h2v1h-2z"/><path fill="#222" d="M12 8h1v1h-1z"/><path fill="#777" d="M0 15h15v1h-15z"/></svg>`,
+  sndmute: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#fff"/><path fill="#999" d="M0 0h15v1h-15zM5 5h1v1h-1zM5 9h1v1h-1z"/><path fill="#bbb" d="M0 1h15v1h-15zM7 3h1v1h-1zM6 10h1v1h-1z"/><path fill="#ddd" d="M0 2h15v1h-15zM0 3h7v1h-7zM9 3h6v1h-6zM0 4h6v1h-6zM9 4h6v1h-6zM0 5h5v1h-5zM9 5h6v1h-6zM0 6h3v1h-3zM9 6h6v1h-6zM0 7h3v1h-3zM9 7h6v1h-6z"/><path fill="#000" d="M8 3h1v1h-1zM7 4h2v1h-2zM6 5h3v1h-3zM3 6h6v1h-6zM3 7h6v1h-6zM3 8h6v1h-6zM6 9h3v1h-3zM7 10h2v1h-2zM8 11h1v1h-1z"/><path fill="#aaa" d="M6 4h1v1h-1z"/><path fill="#eee" d="M0 8h3v1h-3zM9 8h6v1h-6zM0 9h5v1h-5zM9 9h6v1h-6z"/><path fill="#ccc" d="M7 11h1v1h-1z"/><path fill="#777" d="M0 15h15v1h-15z"/></svg>`,
+  sep: `<svg width="1" height="16" viewBox="0 0 1 16" shape-rendering="crispEdges"><rect width="1" height="16" fill="#bbb"/><path fill="#999" d="M0 0h1v1h-1zM0 1h1v1h-1z"/><path fill="#aaa" d="M0 2h1v1h-1zM0 6h1v1h-1zM0 7h1v1h-1z"/><path fill="#ccc" d="M0 9h1v1h-1zM0 10h1v1h-1z"/><path fill="#ddd" d="M0 11h1v1h-1zM0 12h1v1h-1zM0 13h1v1h-1zM0 14h1v1h-1z"/><path fill="#777" d="M0 15h1v1h-1z"/></svg>`,
+  play: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#ddd"/><path fill="#999" d="M0 0h15v1h-15zM8 5h1v1h-1z"/><path fill="#bbb" d="M0 1h15v1h-15zM10 6h1v1h-1z"/><path fill="#000" d="M5 4h1v1h-1zM5 5h2v1h-2zM5 6h4v1h-4zM5 7h5v1h-5zM5 8h4v1h-4zM5 9h2v1h-2zM5 10h1v1h-1z"/><path fill="#555" d="M6 4h1v1h-1zM6 10h1v1h-1z"/><path fill="#ccc" d="M7 4h1v1h-1zM10 8h1v1h-1z"/><path fill="#222" d="M7 5h1v1h-1zM7 9h1v1h-1z"/><path fill="#666" d="M9 6h1v1h-1z"/><path fill="#444" d="M10 7h1v1h-1z"/><path fill="#eee" d="M0 8h5v1h-5zM11 8h4v1h-4zM0 9h5v1h-5zM9 9h6v1h-6z"/><path fill="#777" d="M9 8h1v1h-1zM0 15h15v1h-15z"/><path fill="#aaa" d="M8 9h1v1h-1z"/><path fill="#fff" d="M0 10h5v1h-5zM8 10h7v1h-7zM0 11h15v1h-15zM0 12h15v1h-15zM0 13h15v1h-15zM0 14h15v1h-15z"/></svg>`,
+  pause: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#ddd"/><path fill="#999" d="M0 0h15v1h-15z"/><path fill="#bbb" d="M0 1h15v1h-15z"/><path fill="#111" d="M5 4h2v1h-2zM8 4h2v1h-2zM5 5h2v1h-2zM8 5h2v1h-2zM5 6h2v1h-2zM8 6h2v1h-2zM5 7h2v1h-2zM8 7h2v1h-2zM5 8h2v1h-2zM8 8h2v1h-2zM5 9h2v1h-2zM8 9h2v1h-2zM5 10h2v1h-2zM8 10h2v1h-2z"/><path fill="#eee" d="M0 8h5v1h-5zM7 8h1v1h-1zM10 8h5v1h-5zM0 9h5v1h-5zM7 9h1v1h-1zM10 9h5v1h-5z"/><path fill="#fff" d="M0 10h5v1h-5zM7 10h1v1h-1zM10 10h5v1h-5zM0 11h15v1h-15zM0 12h15v1h-15zM0 13h15v1h-15zM0 14h15v1h-15z"/><path fill="#777" d="M0 15h15v1h-15z"/></svg>`,
+  capl: `<svg width="9" height="16" viewBox="0 0 9 16" shape-rendering="crispEdges"><rect width="9" height="16" fill="#ddd"/><path fill="#999" d="M0 0h9v1h-9zM0 1h1v1h-1zM8 7h1v1h-1zM6 8h1v1h-1z"/><path fill="#bbb" d="M1 1h8v1h-8zM0 3h1v1h-1zM0 4h1v1h-1zM0 5h1v1h-1zM0 8h1v1h-1zM8 8h1v1h-1zM7 9h1v1h-1z"/><path fill="#aaa" d="M0 2h1v1h-1zM0 6h1v1h-1zM0 7h1v1h-1zM5 8h1v1h-1zM7 8h1v1h-1z"/><path fill="#ccc" d="M5 5h1v1h-1zM0 9h1v1h-1zM6 9h1v1h-1zM8 9h1v1h-1zM0 10h1v1h-1z"/><path fill="#777" d="M6 5h1v1h-1zM7 6h2v1h-2zM5 7h1v1h-1zM0 15h9v1h-9z"/><path fill="#555" d="M7 5h2v1h-2z"/><path fill="#888" d="M5 6h1v1h-1zM6 7h2v1h-2z"/><path fill="#666" d="M6 6h1v1h-1z"/><path fill="#eee" d="M1 8h4v1h-4zM1 9h4v1h-4z"/><path fill="#fff" d="M1 10h8v1h-8zM1 11h8v1h-8zM1 12h8v1h-8zM1 13h8v1h-8zM1 14h8v1h-8z"/></svg>`,
+  ch: `<svg width="2" height="16" viewBox="0 0 2 16" shape-rendering="crispEdges"><rect width="2" height="16" fill="#fff"/><path fill="#999" d="M0 0h2v1h-2z"/><path fill="#bbb" d="M0 1h2v1h-2zM1 8h1v1h-1z"/><path fill="#ddd" d="M0 2h2v1h-2zM0 3h2v1h-2zM0 4h2v1h-2z"/><path fill="#666" d="M0 5h1v1h-1z"/><path fill="#555" d="M1 5h1v1h-1z"/><path fill="#888" d="M0 6h2v1h-2z"/><path fill="#aaa" d="M0 7h2v1h-2z"/><path fill="#ccc" d="M0 8h1v1h-1zM0 9h2v1h-2z"/><path fill="#777" d="M0 15h2v1h-2z"/></svg>`,
+  capr: `<svg width="9" height="16" viewBox="0 0 9 16" shape-rendering="crispEdges"><rect width="9" height="16" fill="#fff"/><path fill="#999" d="M0 0h9v1h-9zM4 6h1v1h-1zM2 7h1v1h-1z"/><path fill="#bbb" d="M0 1h9v1h-9zM0 8h3v1h-3zM4 8h1v1h-1z"/><path fill="#ddd" d="M0 2h9v1h-9zM0 3h9v1h-9zM0 4h9v1h-9zM5 5h4v1h-4zM5 6h4v1h-4zM5 7h4v1h-4zM3 9h2v1h-2z"/><path fill="#555" d="M0 5h3v1h-3z"/><path fill="#777" d="M3 5h1v1h-1zM2 6h2v1h-2zM0 15h9v1h-9z"/><path fill="#ccc" d="M4 5h1v1h-1zM0 9h3v1h-3z"/><path fill="#888" d="M0 6h2v1h-2zM3 7h2v1h-2z"/><path fill="#aaa" d="M0 7h2v1h-2zM3 8h1v1h-1z"/><path fill="#eee" d="M5 8h4v1h-4zM5 9h4v1h-4z"/></svg>`,
+  back: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#fff"/><path fill="#999" d="M0 0h15v1h-15z"/><path fill="#bbb" d="M0 1h15v1h-15zM5 9h1v1h-1zM6 10h1v1h-1z"/><path fill="#ddd" d="M0 2h15v1h-15zM0 3h15v1h-15zM0 4h6v1h-6zM8 4h1v1h-1zM11 4h4v1h-4zM0 5h5v1h-5zM8 5h1v1h-1zM11 5h4v1h-4zM0 6h4v1h-4zM8 6h1v1h-1zM11 6h4v1h-4zM0 7h4v1h-4zM8 7h1v1h-1zM11 7h4v1h-4z"/><path fill="#aaa" d="M6 4h1v1h-1zM5 5h1v1h-1zM4 6h1v1h-1zM4 8h1v1h-1z"/><path fill="#000" d="M7 4h1v1h-1zM9 4h2v1h-2zM6 5h2v1h-2zM9 5h2v1h-2zM5 6h3v1h-3zM9 6h2v1h-2zM4 7h4v1h-4zM9 7h2v1h-2zM5 8h3v1h-3zM9 8h2v1h-2zM6 9h2v1h-2zM9 9h2v1h-2zM7 10h1v1h-1zM9 10h2v1h-2z"/><path fill="#eee" d="M0 8h4v1h-4zM8 8h1v1h-1zM11 8h4v1h-4zM0 9h5v1h-5zM8 9h1v1h-1zM11 9h4v1h-4z"/><path fill="#777" d="M0 15h15v1h-15z"/></svg>`,
+  fwd: `<svg width="15" height="16" viewBox="0 0 15 16" shape-rendering="crispEdges"><rect width="15" height="16" fill="#fff"/><path fill="#999" d="M0 0h15v1h-15z"/><path fill="#bbb" d="M0 1h15v1h-15zM9 9h1v1h-1zM8 10h1v1h-1z"/><path fill="#ddd" d="M0 2h15v1h-15zM0 3h15v1h-15zM0 4h4v1h-4zM6 4h1v1h-1zM9 4h6v1h-6zM0 5h4v1h-4zM6 5h1v1h-1zM10 5h5v1h-5zM0 6h4v1h-4zM6 6h1v1h-1zM11 6h4v1h-4zM0 7h4v1h-4zM6 7h1v1h-1zM11 7h4v1h-4z"/><path fill="#000" d="M4 4h2v1h-2zM7 4h1v1h-1zM4 5h2v1h-2zM7 5h2v1h-2zM4 6h2v1h-2zM7 6h3v1h-3zM4 7h2v1h-2zM7 7h4v1h-4zM4 8h2v1h-2zM7 8h3v1h-3zM4 9h2v1h-2zM7 9h2v1h-2zM4 10h2v1h-2zM7 10h1v1h-1z"/><path fill="#aaa" d="M8 4h1v1h-1zM9 5h1v1h-1zM10 6h1v1h-1zM10 8h1v1h-1z"/><path fill="#eee" d="M0 8h4v1h-4zM6 8h1v1h-1zM11 8h4v1h-4zM0 9h4v1h-4zM6 9h1v1h-1zM10 9h5v1h-5z"/><path fill="#777" d="M0 15h15v1h-15z"/></svg>`,
+  end: `<svg width="1" height="16" viewBox="0 0 1 16" shape-rendering="crispEdges"><rect width="1" height="16" fill="#999"/><path fill="#777" d="M0 1h1v1h-1zM0 15h1v1h-1z"/><path fill="#888" d="M0 2h1v1h-1zM0 6h1v1h-1z"/><path fill="#aaa" d="M0 9h1v1h-1zM0 10h1v1h-1z"/><path fill="#bbb" d="M0 11h1v1h-1zM0 12h1v1h-1zM0 13h1v1h-1zM0 14h1v1h-1z"/></svg>`,
+  thumb: `<svg width="13" height="16" viewBox="0 0 13 16" shape-rendering="crispEdges"><rect width="13" height="16" fill="#bbb"/><path fill="#999" d="M0 0h13v1h-13zM4 1h1v1h-1zM8 1h1v1h-1zM3 2h1v1h-1zM9 2h1v1h-1zM2 6h1v1h-1zM10 6h1v1h-1zM1 7h1v1h-1zM11 7h1v1h-1zM1 10h1v1h-1zM11 10h1v1h-1zM4 13h1v1h-1zM8 13h1v1h-1zM5 14h1v1h-1zM7 14h1v1h-1z"/><path fill="#888" d="M5 1h1v1h-1zM7 1h1v1h-1zM2 3h2v1h-2zM10 3h1v1h-1zM1 4h2v1h-2zM11 4h1v1h-1zM2 5h1v1h-1zM10 5h1v1h-1zM0 9h1v1h-1zM12 9h1v1h-1zM1 11h1v1h-1zM11 11h1v1h-1zM3 13h1v1h-1zM9 13h1v1h-1z"/><path fill="#777" d="M6 1h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM8 2h1v1h-1zM9 3h1v1h-1zM10 4h1v1h-1zM1 6h1v1h-1zM11 6h1v1h-1zM0 8h1v1h-1zM12 8h1v1h-1zM2 12h1v1h-1zM10 12h1v1h-1zM6 14h1v1h-1zM0 15h13v1h-13z"/><path fill="#ddd" d="M0 2h2v1h-2zM11 2h2v1h-2zM0 3h1v1h-1zM6 3h1v1h-1zM12 3h1v1h-1zM0 4h1v1h-1zM4 4h5v1h-5zM12 4h1v1h-1zM5 5h2v1h-2zM5 8h3v1h-3zM2 9h3v1h-3zM8 9h3v1h-3zM2 10h1v1h-1zM10 10h1v1h-1z"/><path fill="#ccc" d="M2 2h1v1h-1zM10 2h1v1h-1zM1 3h1v1h-1zM5 3h1v1h-1zM7 3h1v1h-1zM11 3h1v1h-1zM4 5h1v1h-1zM7 5h2v1h-2zM5 6h3v1h-3zM5 7h3v1h-3zM3 8h2v1h-2zM8 8h2v1h-2zM1 12h1v1h-1zM11 12h1v1h-1zM2 13h1v1h-1zM6 13h1v1h-1zM10 13h1v1h-1z"/><path fill="#666" d="M5 2h1v1h-1zM7 2h1v1h-1zM0 7h1v1h-1zM12 7h1v1h-1z"/><path fill="#555" d="M0 5h2v1h-2zM11 5h2v1h-2zM0 6h1v1h-1zM12 6h1v1h-1z"/><path fill="#aaa" d="M3 6h1v1h-1zM9 6h1v1h-1zM2 7h1v1h-1zM10 7h1v1h-1zM1 8h1v1h-1zM11 8h1v1h-1zM1 9h1v1h-1zM11 9h1v1h-1zM2 11h1v1h-1zM10 11h1v1h-1zM3 12h1v1h-1zM9 12h1v1h-1z"/><path fill="#eee" d="M5 9h3v1h-3zM3 10h2v1h-2zM8 10h2v1h-2zM0 11h1v1h-1zM12 11h1v1h-1zM4 12h1v1h-1zM8 12h1v1h-1zM3 14h1v1h-1zM9 14h1v1h-1z"/><path fill="#fff" d="M5 10h3v1h-3zM3 11h7v1h-7zM0 12h1v1h-1zM5 12h3v1h-3zM12 12h1v1h-1zM0 13h2v1h-2zM11 13h2v1h-2zM0 14h3v1h-3zM10 14h3v1h-3z"/></svg>`,
+};
+function fmtClock(s) {
+  s = Math.max(0, Math.floor(Number.isFinite(s) ? s : 0));
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+(function wireMovie() {
+  const ctl = $("#mv"), v = $("#rp-box video");
+  ctl.querySelector(".mv-edge").innerHTML = MVQ.edge; ctl.querySelector(".mv-end").innerHTML = MVQ.end;
+  ctl.querySelector(".mv-snd").innerHTML = MVQ.snd; ctl.querySelector(".mv-play").innerHTML = MVQ.play;
+  ctl.querySelectorAll(".mv-sep").forEach(s => s.innerHTML = MVQ.sep);
+  ctl.querySelector(".mv-capl").innerHTML = MVQ.capl; ctl.querySelector(".mv-capr").innerHTML = MVQ.capr;
+  ctl.querySelector(".mv-thumb").innerHTML = MVQ.thumb;
+  ctl.querySelector(".mv-back").innerHTML = MVQ.back; ctl.querySelector(".mv-fwd").innerHTML = MVQ.fwd;
+  const play = ctl.querySelector(".mv-play"), snd = ctl.querySelector(".mv-snd"),
+    back = ctl.querySelector(".mv-back"), fwd = ctl.querySelector(".mv-fwd"),
+    track = ctl.querySelector(".mv-track"), thumb = ctl.querySelector(".mv-thumb");
+  // as an image (unlike inline markup) the SVG needs its namespace said
+  track.style.background = `url('data:image/svg+xml;utf8,${encodeURIComponent(
+    MVQ.ch.replace("<svg ", '<svg xmlns="http://www.w3.org/2000/svg" '))}') repeat-x`;
+  // a replay is silent: the speaker shows only on evidence of sound
+  const hasAudio = () => v.audioTracks ? v.audioTracks.length > 0
+    : v.webkitAudioDecodedByteCount !== undefined ? v.webkitAudioDecodedByteCount > 0
+    : v.mozHasAudio !== undefined ? !!v.mozHasAudio : false;
+  ctl.classList.add("mv-silent");
+  v.addEventListener("loadeddata", () => setTimeout(() => ctl.classList.toggle("mv-silent", !hasAudio()), 800));
+  // the bead rides 2px inside either end of the channel, as sampled
+  const setThumb = () => {
+    const run = track.clientWidth - thumb.offsetWidth - 4;
+    thumb.style.left = 2 + (v.duration && run > 0 ? Math.round(v.currentTime / v.duration * run) : 0) + "px";
+  };
+  const setTime = () => {
+    if (!v.getAttribute("src")) return;
+    $("#rp-meta").textContent = (v.videoWidth ? v.videoWidth + " × " + v.videoHeight + " · " : "") + fmtClock(v.currentTime) + " / " + fmtClock(v.duration);
+  };
+  v.addEventListener("timeupdate", () => { setThumb(); setTime(); });
+  v.addEventListener("durationchange", () => { setThumb(); setTime(); });
+  v.addEventListener("loadedmetadata", () => { setThumb(); setTime(); });
+  v.addEventListener("play", () => { play.innerHTML = MVQ.pause; play.title = "Pause"; });
+  v.addEventListener("pause", () => { play.innerHTML = MVQ.play; play.title = "Play"; });
+  v.addEventListener("error", () => { if (v.getAttribute("src")) $("#rp-meta").textContent = "can’t play this movie"; });
+  play.addEventListener("click", () => { if (v.paused) v.play().catch(e => setStatus(e.message, true)); else v.pause(); });
+  snd.addEventListener("click", () => { v.muted = !v.muted; snd.innerHTML = v.muted ? MVQ.sndmute : MVQ.snd; });
+  back.addEventListener("click", () => { v.pause(); v.currentTime = Math.max(0, v.currentTime - 1 / 30); });
+  fwd.addEventListener("click", () => { v.pause(); if (v.duration) v.currentTime = Math.min(v.duration, v.currentTime + 1 / 30); });
+  const seek = e => {
+    const r = track.getBoundingClientRect(), run = r.width - thumb.offsetWidth - 4;
+    if (!v.duration || run <= 0) return;
+    v.currentTime = Math.min(Math.max((e.clientX - r.left - 2 - thumb.offsetWidth / 2) / run, 0), 1) * v.duration;
+  };
+  track.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    track.setPointerCapture(e.pointerId);
+    seek(e);
+    const move = ev => seek(ev);
+    track.addEventListener("pointermove", move);
+    track.addEventListener("pointerup", () => track.removeEventListener("pointermove", move), { once: true });
+  });
+  new ResizeObserver(setThumb).observe(track);
+})();
+let rpFor = null, rpStamp = -1;
+function resetReplay() {
+  const v = $("#rp-box video"); v.pause(); v.removeAttribute("src"); v.load();
+  rpFor = null; $("#rp-meta").textContent = ""; $("#mv").classList.add("off");
+}
+function loadReplay() {
+  const s = cur(); if (!s) return;
+  const v = $("#rp-box video"), note = $("#rp-note");
+  $("#rp-save").disabled = !s.clip;
+  if (!s.clip) {
+    if (rpFor) resetReplay();
+    note.textContent = s.state === "replaying" ? "Making the replay: the painting is painted again, stroke by stroke…"
+      : s.chunks ? "No replay yet. Replay… makes one: the painting made again at the pace of the hand." : "Nothing to replay yet.";
+    return;
+  }
+  note.textContent = "";
+  if (rpFor === s.name && rpStamp === s.updated && v.getAttribute("src")) return;
+  if (rpFor === s.name && v.getAttribute("src") && !v.paused) return;
+  rpFor = s.name; rpStamp = s.updated;
+  v.src = fileURL(s.name, "out/replay.mp4") + (TOKEN ? "&" : "?") + "v=" + s.updated;
+  $("#mv").classList.remove("off");
+}
+
+// ---- actions ----
+const studioPath = (s, tail) => "/studios/" + encodeURIComponent(s.name) + tail;
+async function act(label, fn) {
+  try { const s = await fn(); if (s && s.name) upsert(s); }
+  catch (e) { alertBox(label, e.message); }
+}
+const popup = (id, opts, value) => `<span class="popup"><select id="${id}">${opts.map(o => `<option value="${esc(o.v)}"${o.v === value ? " selected" : ""}>${esc(o.l)}</option>`).join("")}</select><span class="well"><i><b></b></i></span></span>`;
+
+function startSheet(s, after) {
+  const resume = !!(detail && detail.name === s.name && detail.runs && detail.runs.length);
+  dialog(`<h2>${resume ? "Resume the Painter" : "Start a Painter"}</h2>
+    <p>${resume ? "The painter picks up its session where it stopped, with what it saw and wrote so far." : "A Claude painter reads the brief and works at this studio’s easel until it is happy with the picture."}</p>
+    <div class="row f"><label for="d-model">Model:</label>${popup("d-model", models.map(m => ({ v: m.id, l: m.label })), s.model || defaults.model)}</div>
+    <div class="row f"><label for="d-effort">Thinking:</label>${popup("d-effort", efforts.map(e => ({ v: e, l: e[0].toUpperCase() + e.slice(1) })), s.effort || defaults.effort)}</div>
+    <div class="row f"><label for="d-hours">Stop after:</label><input type="text" class="num" id="d-hours" value="${esc(defaults.hours)}"><span class="suffix">hours</span>
+      <span class="hint">At the limit the session stops; the log keeps the painting so far.</span></div>
+    <div class="row h" style="margin-left: 92px"><input type="checkbox" id="d-notify"><label for="d-notify">Push to my phone when the painter stops</label></div>
+    <div class="err" id="d-err"></div>
+    <div class="btns"><button class="ghost" id="d-cancel">Cancel</button><button class="ghost default" id="d-ok">${resume ? "Resume" : "Start"}</button></div>`,
+  async () => {
+    const hours = parseFloat($("#d-hours").value);
+    if (!(hours > 0 && hours <= 48)) { $("#d-err").textContent = "Hours: a number above 0, at most 48."; return false; }
+    try {
+      const r = await json("POST", studioPath(s, "/start"), { model: $("#d-model").value, effort: $("#d-effort").value, hours, notify: $("#d-notify").checked });
+      upsert(r); if (after) after();
+    } catch (e) { $("#d-err").textContent = e.message; return false; }
+  });
+}
+$("#b-start").addEventListener("click", () => { const s = cur(); if (s) startSheet(s); });
+async function stopPainter() {
+  const s = cur(); if (!s || s.state !== "painting") return;
+  if (!await confirmBox("Stop the painter?", "It ends after the step it is on. The painting so far stays in the log; Start Painter… can resume the session later.", "Stop")) return;
+  act("The painter couldn’t be stopped.", () => json("POST", studioPath(s, "/stop")));
+}
+$("#b-stop").addEventListener("click", stopPainter);
+function finishSheet(s) {
+  dialog(`<h2>Finish the Painting</h2>
+    <p>The painting dries right through, is varnished, and ages as oil paint does. The painter’s log is left as it is; the finished picture is saved beside it.</p>
+    <div class="row h"><input type="checkbox" id="d-varnish" checked><label for="d-varnish">Varnish</label>
+      <span style="width: 16px"></span><label for="d-coats">Coats:</label><input type="text" class="num" id="d-coats" value="0.4" style="width: 52px; height: 20px"></div>
+    <div class="row h"><input type="checkbox" id="d-cracks" checked><label for="d-cracks">Let the paint crack as it ages</label></div>
+    <div class="row h"><input type="checkbox" id="d-relief"><label for="d-relief">Light the paint’s relief</label></div>
+    <div class="err" id="d-err"></div>
+    <div class="btns"><button class="ghost" id="d-cancel">Cancel</button><button class="ghost default" id="d-ok">Finish</button></div>`,
+  async () => {
+    const coats = parseFloat($("#d-coats").value);
+    if ($("#d-varnish").checked && !(coats > 0 && coats <= 4)) { $("#d-err").textContent = "Coats: a number above 0, at most 4."; return false; }
+    try { upsert(await json("POST", studioPath(s, "/finish"), { varnish: $("#d-varnish").checked, coats, cracks: $("#d-cracks").checked, relief: $("#d-relief").checked })); }
+    catch (e) { $("#d-err").textContent = e.message; return false; }
+  });
+  $("#d-varnish").addEventListener("change", e => { $("#d-coats").disabled = !e.target.checked; });
+}
+$("#b-finish").addEventListener("click", () => { const s = cur(); if (s) finishSheet(s); });
+function clipSheet(s) {
+  dialog(`<h2>Make a Replay</h2>
+    <p>The log is painted again on a fresh canvas and filmed at the pace of the hand: a short movie of the picture being made.</p>
+    <div class="row f"><label for="d-len">Length:</label><input type="text" class="num" id="d-len" value="75"><span class="suffix">seconds</span></div>
+    <div class="err" id="d-err"></div>
+    <div class="btns"><button class="ghost" id="d-cancel">Cancel</button><button class="ghost default" id="d-ok">Make Replay</button></div>`,
+  async () => {
+    const length = parseInt($("#d-len").value, 10);
+    if (!(length >= 10 && length <= 600)) { $("#d-err").textContent = "Length: 10 to 600 seconds."; return false; }
+    try { upsert(await json("POST", studioPath(s, "/clip"), { length })); }
+    catch (e) { $("#d-err").textContent = e.message; return false; }
+  });
+}
+$("#b-clip").addEventListener("click", () => { const s = cur(); if (s) clipSheet(s); });
+
+// Save to Workspace: the finished picture (or the latest look) and the
+// replay go to the Workspace's Easel folder through exe's own API
+async function saveToWorkspace(s, path, wsName) {
+  const blob = await (await fetch(fileURL(s.name, path), { cache: "no-store" })).blob();
+  const headers = {}; if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+  const r = await fetch("/v1/workspace/Easel/" + encodeURIComponent(wsName), { method: "PUT", headers, body: blob });
+  if (!r.ok) { let m = "HTTP " + r.status; try { m = (await r.json()).error || m; } catch (e) {} throw new Error(m); }
+  return "Easel/" + wsName;
+}
+const wsBase = s => (s.title ? s.title.replace(/[\/\\:*?"<>|]+/g, " ").trim().slice(0, 80) + " (" + s.name + ")" : s.name);
+$("#b-save").addEventListener("click", async () => {
+  const s = cur(); if (!s) return;
+  const path = s.final ? "out/final.png" : s.latest;
+  try { const p = await saveToWorkspace(s, path, wsBase(s) + (s.final ? "" : " (look)") + ".png"); setStatus("Saved to the Workspace: " + p); }
+  catch (e) { alertBox("The picture wasn’t saved to the Workspace.", e.message); }
+});
+$("#rp-save").addEventListener("click", async () => {
+  const s = cur(); if (!s || !s.clip) return;
+  try { const p = await saveToWorkspace(s, "out/replay.mp4", wsBase(s) + ".mp4"); setStatus("Saved to the Workspace: " + p); }
+  catch (e) { alertBox("The movie wasn’t saved to the Workspace.", e.message); }
+});
+
+async function newStudio() {
+  if (!profiles.length) { try { profiles = (await api("/profiles")).profiles || []; } catch (e) {} }
+  let brief = "";
+  try { brief = (await api("/templates/free")).text || ""; } catch (e) {}
+  let n = 1; while (studios.some(s => s.name === "studio-" + n)) n++;
+  dialog(`<h2>New Studio</h2>
+    <div class="row f"><label for="d-name">Name:</label><input type="text" id="d-name" value="studio-${n}" spellcheck="false" autocomplete="off">
+      <span class="hint">Lowercase letters, digits and hyphens: the studio’s folder.</span></div>
+    <div class="row f"><label for="d-box">Box:</label>${popup("d-box", (profiles.length ? profiles : [{ name: "every", label: "Every tube" }]).map(p => ({ v: p.name, l: p.label })), "every")}
+      <span class="hint">The tubes on the palette, and the notes on their paints.</span></div>
+    <div class="row f"><label for="d-brief">Brief:</label><textarea id="d-brief" class="brief" spellcheck="false"></textarea></div>
+    <div class="group">
+      <div class="row h"><input type="checkbox" id="d-go" checked><label for="d-go">Start a painter as soon as the studio is ready</label></div>
+      <div class="row f"><label for="d-model">Model:</label>${popup("d-model", models.map(m => ({ v: m.id, l: m.label })), defaults.model)}</div>
+      <div class="row f"><label for="d-effort">Thinking:</label>${popup("d-effort", efforts.map(e => ({ v: e, l: e[0].toUpperCase() + e.slice(1) })), defaults.effort)}</div>
+    </div>
+    <div class="err" id="d-err"></div>
+    <div class="btns"><button class="ghost" id="d-cancel">Cancel</button><button class="ghost default" id="d-ok">Create</button></div>`,
+  async () => {
+    const name = $("#d-name").value.trim();
+    if (!NAME.test(name)) { $("#d-err").textContent = "Name: lowercase letters, digits and hyphens, starting with a letter or digit."; return false; }
+    if (studios.some(s => s.name === name)) { $("#d-err").textContent = "There is a studio called " + name + " already."; return false; }
+    const go = $("#d-go").checked, model = $("#d-model").value, effort = $("#d-effort").value;
+    try {
+      const s = await json("POST", "/studios", { name, profile: $("#d-box").value, brief: $("#d-brief").value });
+      upsert(s); await selectStudio(name, true);
+      if (go) pendingStart[name] = { model, effort, hours: defaults.hours, notify: false };
+    } catch (e) { $("#d-err").textContent = e.message; return false; }
+  });
+  $("#d-brief").value = brief;
+  const sync = () => { const on = $("#d-go").checked; $("#d-model").disabled = !on; $("#d-effort").disabled = !on; };
+  $("#d-go").addEventListener("change", sync); sync();
+  $("#d-name").select();
+}
+// a studio made with "start as soon as it is ready" starts when its export ends
+const pendingStart = {};
+function maybeStartPending(s) {
+  const p = pendingStart[s.name];
+  if (!p || s.state === "preparing") return;
+  delete pendingStart[s.name];
+  if (s.state !== "idle") return;
+  act("The painter couldn’t start.", () => json("POST", studioPath(s, "/start"), p));
+}
+$("#b-new").addEventListener("click", newStudio);
+
+async function trashStudio(s) {
+  if (busy(s)) { alertBox("This studio is busy.", "Stop the painter, or wait for the job to end, before moving it to the Trash."); return; }
+  if (!await confirmBox("Move “" + (s.title || s.name) + "” to the Trash?", "The studio’s folder goes to studios/.trash, with its painting, session and journal; it can be moved back by hand.", "Move to Trash")) return;
+  try {
+    await api(studioPath(s, ""), { method: "DELETE" });
+    removeStudio(s.name);
+  } catch (e) { alertBox("The studio wasn’t moved.", e.message); }
+}
+function removeStudio(name) {
+  studios = studios.filter(x => x.name !== name);
+  if (sel === name) { sel = null; detail = null; if (MOBILE) screen("list"); }
+  renderList(); showStudio();
+}
+
+// ---- contextual menu ----
+function menu(x, y, items) {
+  closeMenu();
+  const m = document.createElement("div");
+  m.className = "dropdown"; m.id = "ctx";
+  for (const it of items) {
+    if (it === "-") { const s = document.createElement("div"); s.className = "dd-sep"; m.append(s); continue; }
+    const d = document.createElement("div");
+    d.className = "dd-item" + (it.dis ? " dis" : ""); d.textContent = it.label;
+    if (!it.dis) d.addEventListener("click", () => { closeMenu(); it.run(); });
+    m.append(d);
+  }
+  document.body.append(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, window.innerWidth - r.width - 4) + "px";
+  m.style.top = Math.min(y, window.innerHeight - r.height - 4) + "px";
+}
+function closeMenu() { const m = $("#ctx"); if (m) m.remove(); }
+document.addEventListener("pointerdown", e => { if (!e.target.closest("#ctx")) closeMenu(); }, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeMenu(); });
+$("#st-list").addEventListener("contextmenu", async e => {
+  const row = e.target.closest(".st");
+  e.preventDefault();
+  if (!row) { menu(e.clientX, e.clientY, [{ label: "New Studio…", run: newStudio }]); return; }
+  await selectStudio(row.dataset.name, false);
+  const s = cur(), can = !busy(s) && s.state !== "failed";
+  menu(e.clientX, e.clientY, [
+    { label: "Start Painter…", run: () => startSheet(s), dis: !can },
+    { label: "Stop Painter", run: stopPainter, dis: s.state !== "painting" },
+    "-",
+    { label: "Finish…", run: () => finishSheet(s), dis: !can || !s.chunks },
+    { label: "Replay…", run: () => clipSheet(s), dis: !can || !s.chunks },
+    { label: "Save to Workspace", run: () => $("#b-save").click(), dis: !s.final && !s.latest },
+    { label: "Copy Folder Path", run: () => navigator.clipboard?.writeText("/www/exe-art/studios/" + s.name).then(() => setStatus("Copied the folder’s path."), () => {}) },
+    "-",
+    { label: "Move to Trash…", run: () => trashStudio(s), dis: busy(s) },
+  ]);
+});
+// the keyboard in the list: arrows move, Delete asks
+$("#studios").addEventListener("keydown", e => {
+  const i = studios.findIndex(s => s.name === sel);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault();
+    const j = Math.min(studios.length - 1, Math.max(0, i + (e.key === "ArrowDown" ? 1 : -1)));
+    if (studios[j]) { selectStudio(studios[j].name, false); $(`#st-list .st[data-name="${studios[j].name}"]`)?.scrollIntoView({ block: "nearest" }); }
+  } else if ((e.key === "Delete" || e.key === "Backspace") && cur()) { e.preventDefault(); trashStudio(cur()); }
+});
+
+// ---- dialogs, alerts, confirms (the Hub app's blocks, through Planet) ----
+function dialog(html, ok, onClose) {
+  const veil = $("#veil"), dlg = $("#dlg");
+  dlg.innerHTML = html;
+  const scroll = document.createElement("div");
+  scroll.className = "dlg-scroll";
+  const btns = dlg.querySelector(":scope > .btns");
+  for (const el of [...dlg.children]) if (el !== btns && el.tagName !== "H2") scroll.append(el);
+  dlg.insertBefore(scroll, btns);
+  veil.classList.add("on");
+  const close = () => { veil.classList.remove("on"); dlg.innerHTML = ""; document.removeEventListener("keydown", onKey, true); if (onClose) onClose(); };
+  const submit = async () => { if (await ok() !== false) close(); };
+  const onKey = e => {
+    if (veil.classList.contains("alert")) return;
+    if (e.key === "Escape") { e.preventDefault(); close(); }
+    else if (e.key === "Enter" && !(e.target instanceof HTMLTextAreaElement)) { e.preventDefault(); submit(); }
+  };
+  document.addEventListener("keydown", onKey, true);
+  const c = $("#d-cancel"); if (c) c.addEventListener("click", close);
+  $("#d-ok").addEventListener("click", submit);
+}
+let alertResolve = null;
+function alertBox(message, detail, cancelLabel, okLabel) {
+  const veil = $("#veil");
+  const had = veil.classList.contains("on");
+  $("#a-msg").textContent = message;
+  const d = $("#a-detail"); d.textContent = detail || ""; d.hidden = !detail;
+  $("#a-ok").textContent = okLabel || "OK";
+  $("#a-cancel").hidden = !cancelLabel; $("#a-cancel").textContent = cancelLabel || "Cancel";
+  veil.classList.add("on", "alert");
+  const done = v => {
+    document.removeEventListener("keydown", onKey, true);
+    veil.classList.remove("alert");
+    if (!had) veil.classList.remove("on");
+    const r = alertResolve; alertResolve = null; if (r) r(v);
+  };
+  const onKey = e => { if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); done(true); } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); done(false); } };
+  document.addEventListener("keydown", onKey, true);
+  $("#a-ok").onclick = () => done(true);
+  $("#a-cancel").onclick = () => done(false);
+  $("#a-ok").focus();
+  return new Promise(r => { alertResolve = r; });
+}
+const confirmBox = (message, detail, okLabel) => alertBox(message, detail, "Cancel", okLabel);
+
+// ---- live: the daemon's event stream ----
+let es = null, esRetry = null, bootLoaded = false, esFails = 0;
+function openStream() {
+  if (es || hidden) return;
+  es = new EventSource(withToken(API + "/events"));
+  es.addEventListener("hello", () => {
+    esFails = 0;
+    if (bootLoaded) bootLoaded = false;
+    else loadStudios().catch(e => setStatus("The Easel daemon isn’t answering: " + e.message, true));
+  });
+  es.addEventListener("studio", e => {
+    let s; try { s = JSON.parse(e.data); } catch (x) { return; }
+    upsert(s); maybeStartPending(s);
+  });
+  es.addEventListener("removed", e => { try { removeStudio(JSON.parse(e.data).name); } catch (x) {} });
+  // a stream that drops (a daemon restart, a sleeping laptop) reconnects;
+  // only one that keeps failing is worth a word on the status line
+  es.onerror = () => {
+    es.close(); es = null;
+    if (++esFails >= 2) setStatus("The Easel daemon isn’t answering; trying again…", true);
+    clearTimeout(esRetry); esRetry = setTimeout(openStream, esFails >= 2 ? 5000 : 1000);
+  };
+}
+function closeStream() { if (es) { es.close(); es = null; } clearTimeout(esRetry); }
+// a changed studio refreshes the pane on show: the session follows, the
+// canvas takes the newest look, the journal and the log reread
+const _studioChanged = studioChanged;
+studioChanged = function (before, s) {
+  _studioChanged(before, s);
+  if (!before) return;
+  if (tab === "session" && (before.updated !== s.updated || before.state !== s.state)) loadSession();
+  if (tab === "canvas" && (before.latest !== s.latest || before.final !== s.final || before.state !== s.state)) renderCanvas();
+  if (tab === "journal" && before.updated !== s.updated) loadJournal();
+  if (tab === "code" && before.chunks !== s.chunks) loadCode();
+  if (tab === "easel" && before.state !== s.state) { const was = busy(before), now = busy(s); if (was !== now) ezLine("sys", now ? "The painter is at the easel. This console opens when it stops." : "The easel is free."); renderConsole(); }
+  if (tab === "replay" && (before.clip !== s.clip || before.state !== s.state)) loadReplay();
+  if (before.state !== s.state && ["finishing", "replaying"].includes(before.state)) {
+    if (s.error) alertBox(before.state === "finishing" ? "The painting couldn’t be finished." : "The replay couldn’t be made.", s.error);
+    else setStatus(before.state === "finishing" ? "Finished: the varnished picture is in Canvas → Finished." : "The replay is ready.");
+    if (before.state === "finishing" && !s.error) { view = "final"; $("#view").value = "final"; if (tab === "canvas") renderCanvas(); }
+  }
+};
+
+// ---- the seam's grip, remembered per browser ----
+for (const g of $$(".grip")) {
+  const target = $("#" + g.dataset.for);
+  const w = lsGet("w." + g.dataset.for); if (w) target.style.width = w;
+  g.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    g.setPointerCapture(e.pointerId);
+    const start = e.clientX, w0 = target.getBoundingClientRect().width;
+    const move = ev => { target.style.width = Math.min(420, Math.max(150, w0 + ev.clientX - start)) + "px"; };
+    const up = () => { g.removeEventListener("pointermove", move); g.removeEventListener("pointerup", up); lsSet("w." + g.dataset.for, target.style.width); };
+    g.addEventListener("pointermove", move); g.addEventListener("pointerup", up);
+  });
+}
+
+// ---- the action row's glyphs, drawn from these rows (X = ink) ----
+const GLYPHS = {
+  start: ["", "   X", "   XX", "   XXX", "   XXXX", "   XXXXX", "   XXXXXX", "   XXXXXX", "   XXXXX", "   XXXX", "   XXX", "   XX", "   X", ""],
+  stop: ["", "", "", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "   XXXXXXXX", "", "", ""],
+  finish: ["      X", "      X", "     XXX", "     XXX", "    XXXXX", "   XXXXXXX", "   XX XXXX", "  XX XXXXXX", "  XX XXXXXX", "  XXX XXXXX", "  XXXXXXXXX", "   XXXXXXX", "    XXXXX", ""],
+  clip: ["XXXXXXXXXXXXXX", "X X  X  X  X X", "XXXXXXXXXXXXXX", "X            X", "X    X       X", "X    XXX     X", "X    XXXXX   X", "X    XXX     X", "X    X       X", "X            X", "XXXXXXXXXXXXXX", "X X  X  X  X X", "XXXXXXXXXXXXXX", ""],
+  save: ["XXXXXXXXXXXX", "X  XXXXXX  XX", "X  XXXX X  X X", "X  XXXX X  X X", "X  XXXXXX    X", "X            X", "X            X", "X XXXXXXXXXX X", "X X        X X", "X X        X X", "X X        X X", "X X        X X", "XXXXXXXXXXXXXX", ""],
+};
+function glyphSVG(rows) {
+  let d = "";
+  rows.forEach((r, y) => { for (let x = 0; x < r.length; x++) { if (r[x] !== "X") continue; let e = x; while (r[e] === "X") e++; d += `M${x} ${y}h${e - x}v1h-${e - x}z`; x = e; } });
+  return `<svg class="ix" width="14" height="14" viewBox="0 0 14 14" shape-rendering="crispEdges" aria-hidden="true"><path class="k" d="${d}"/></svg>`;
+}
+for (const b of $$("#bar button.g")) { b.insertAdjacentHTML("beforeend", glyphSVG(GLYPHS[b.dataset.glyph])); b.setAttribute("aria-label", b.querySelector(".t").textContent); }
+
+// ---- a phone: the list, then one studio ----
+function screen(name) { document.body.dataset.screen = name; }
+$("#back").addEventListener("click", () => screen("list"));
+if (MOBILE) { document.body.classList.add("mobile"); screen("list"); }
+
+// ---- desktop window plumbing ----
+window.addEventListener("pointerdown", () => {
+  if (window.parent !== window) parent.postMessage({ exe: "focus" }, location.origin);
+}, { capture: true, passive: true });
+const grow = $("#grow");
+if (window.parent === window || MOBILE) grow.style.display = "none";
+grow.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  grow.setPointerCapture(e.pointerId);
+  const sx = e.clientX, sy = e.clientY;
+  const move = ev => parent.postMessage({ exe: "grow", dx: ev.clientX - sx, dy: ev.clientY - sy }, location.origin);
+  const up = () => { grow.removeEventListener("pointermove", move); grow.removeEventListener("pointerup", up); parent.postMessage({ exe: "grow-end" }, location.origin); };
+  grow.addEventListener("pointermove", move); grow.addEventListener("pointerup", up);
+  parent.postMessage({ exe: "grow-start" }, location.origin);
+});
+document.addEventListener("scroll", e => {
+  const el = e.target;
+  if (!(el instanceof Element)) return;
+  el.classList.toggle("scrolled-y", el.scrollTop >= 1);
+  el.classList.toggle("at-y-end", el.scrollTop >= 1 && el.scrollTop >= el.scrollHeight - el.clientHeight - 1);
+}, { capture: true, passive: true });
+// a closed window stops listening and pauses the movie; reopened, it
+// catches up with everything that happened meanwhile
+window.addEventListener("message", e => {
+  if (e.origin !== location.origin || !e.data) return;
+  if (e.data.exe === "hide") { hidden = true; closeStream(); $("#rp-box video").pause(); }
+  else if (e.data.exe === "show") { hidden = false; openStream(); }
+});
+
+// ---- boot ----
+(async () => {
+  const show = lsGet("show"); if (show) { $("#se-show").value = show; $("#se-show").dispatchEvent(new Event("change")); }
+  const t = lsGet("tab"); if (t && $(`#tabs .tab[data-tab="${t}"]`)) showTab(t);
+  try {
+    const m = await api("/models");
+    models = m.models || []; efforts = m.efforts || efforts; defaults = Object.assign(defaults, m.defaults || {});
+  } catch (e) {}
+  try { await loadStudios(); bootLoaded = true; }
+  catch (e) { setStatus("The Easel daemon isn’t answering: " + e.message, true); renderList(); showStudio(); }
+  openStream();
+})();
+</script>
+</body>
+</html>
