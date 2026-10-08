@@ -40,6 +40,7 @@ check:
 	test -x "$(CLAUDE)" || { echo "missing: Claude Code (claude on PATH, signed in)"; ok=0; }; \
 	command -v cargo >/dev/null && cargo --version | awk '{split($$2,v,"."); exit !(v[1]>1 || v[2]>=84)}' \
 	  || { echo "missing: Rust 1.84 or newer (rustup update): the engine's Cargo.toml uses resolver 3"; ok=0; }; \
+	command -v uv >/dev/null || { echo "missing: uv, which the engine's export runs its scripts with (brew install uv, or curl -LsSf https://astral.sh/uv/install.sh | sh)"; ok=0; }; \
 	if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then \
 	  echo "missing: FFmpeg with ffprobe and libx264, for the replays (brew install ffmpeg / apt install ffmpeg)"; ok=0; \
 	elif ! enc=$$(ffmpeg -hide_banner -encoders 2>&1); then \

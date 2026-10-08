@@ -27,6 +27,9 @@ func (d *Daemon) Preflight() {
 	} else if !strings.Contains(string(out), "libx264") {
 		problems = append(problems, "FFmpeg has no libx264 encoder: replays can't be made. Install an FFmpeg built with libx264 (Homebrew's and Debian's are)")
 	}
+	if lookIn(env, "uv") == "" {
+		problems = append(problems, "uv isn't installed: the engine's export runs its scripts with it, so New Studio can't work. macOS: brew install uv; elsewhere: curl -LsSf https://astral.sh/uv/install.sh | sh")
+	}
 	if !exists(filepath.Join(d.Engine, "target/release/easel")) {
 		problems = append(problems, fmt.Sprintf("the engine's replay easel isn't built: finishing and replays can't run. Run: cd %s && cargo build --release -p easel", d.Engine))
 	}

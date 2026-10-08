@@ -21,9 +21,10 @@ dries on a clock, and layers combine by Kubelka–Munk optics. It is the
 ## Setting it up
 
 You need [exe](https://github.com/livid/exe), Claude Code (signed in), Go 1.26
-or newer, Rust 1.84 or newer (`rustup update`), Node 23.6 or newer, and FFmpeg
-with `ffprobe` and libx264 for the replays (`brew install ffmpeg`, or
-`apt install ffmpeg`). Linux and macOS both work.
+or newer, Rust 1.84 or newer (`rustup update`), Node 23.6 or newer,
+[uv](https://docs.astral.sh/uv/) (the engine runs its scripts with it), and
+FFmpeg with `ffprobe` and libx264 for the replays. On macOS:
+`brew install go node uv ffmpeg`. Linux and macOS both work.
 
 ```sh
 git clone --recurse-submodules --shallow-submodules https://github.com/livid/exe-easel

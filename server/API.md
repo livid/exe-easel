@@ -80,7 +80,7 @@ trimmed; "" when that leaves more than 120 characters or nothing.
 
 - `GET /v1/studios` → `{"studios": [studio…]}`, newest `created` first.
 - `GET /v1/health` → `{"ok", "problems": [words…]}`: what the daemon found
-  missing when it started (preflight.go): FFmpeg with ffprobe and libx264, the
+  missing when it started (preflight.go): uv, FFmpeg with ffprobe and libx264, the
   engine's replay easel, the engine itself, node, claude. Each is also in the
   error log; the app shows them in an alert when its window opens.
 - `GET /v1/events` → server-sent events. `event: hello` (data `{}`) first, then
