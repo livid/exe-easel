@@ -71,7 +71,7 @@ trimmed; "" when that leaves more than 120 characters or nothing.
 | `painting` | a `harness/claude/paint` for this studio is running (found in /proc, whoever started it) |
 | `stopping` | stop was asked; the painter has not ended yet |
 | `finishing`, `replaying` | a finish or clip job runs |
-| `drawing` | a views job runs (always automatic: see The views) |
+| `drawing` | a views job runs (always automatic: see The views); the heal's may be filming the replay beside them, and turns `replaying` once they are kept |
 | `failed` | the export failed (`error` says why); only DELETE helps |
 
 `painting` wins over a job; jobs refuse to start while painting.
@@ -200,16 +200,25 @@ from the same source once in 10 s. Every entry has `t`, `src` (`app` or
 ## Self-heal
 
 Nobody has to press anything for a painting's picture or replay (`heal.go`).
-Every 10 s the daemon picks one studio that wants something made, newest log
-first, and starts it as an automatic job (`job.auto: true`; states `finishing`
-and `replaying` as usual): one at a time across the machine, never while a
-painter works, a job runs or the app's own easel is open, and only once
-`paintings/lua/painting.lua` has rested for two minutes.
+Every 10 s the daemon looks for the studios that want something made and
+starts each as an automatic job (`job.auto: true`; states `finishing`,
+`drawing` and `replaying` as usual): one a studio, never while its painter
+works, a job of its runs or the app's own easel is open, and only once
+`paintings/lua/painting.lua` has rested for two minutes. The order is what
+the window waits for most: every finished picture first, then views, then
+replays, each kind newest log first. Finishes (seconds each) all start at
+once; replays, the views' and the clips', run at most `-heal-jobs` at a time
+across the machine (default: a sixth of the cores, at least one; each is a
+replay of the whole log on a core or two).
 
 - `out/final.png` (+ `final.jpg`) is made when the last run in runs.log ended
   with status 0 and there is none, and made again when the log is newer, with
   the options of the last finish asked for (`out/app/finish.json`).
 - `out/app/views/` (above) are drawn when missing or older than the log.
+  When the replay is wanted too, it is filmed beside them in the same job
+  (two replays that need nothing from each other): the job reads `views`
+  until they are kept, then `clip`. Views that fail there are recorded as
+  their own failure and the filming goes on.
 - `out/replay.mp4` is made when there is none or the log is newer, at the
   length last asked for (`out/app/clip.json`, else 75 s).
 - A start, a `look` or `do`, a finish or clip asked for, or a delete cancels an

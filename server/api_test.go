@@ -21,12 +21,15 @@ import (
 
 // stubEasel answers status/open/close/do/look/note like the easel, enough
 // for the daemon: an open easel is a file, a chunk is appended to the log,
-// a look copies a fixture PNG to a new look-N.png.
+// a look copies a fixture PNG to a new look-N.png. A studio holding
+// open.waits opens only once the file it names is there (10 s at most).
 const stubEasel = `#!/bin/sh
 cmd=$1; shift
 case "$cmd" in
 status) if [ -f .open ]; then echo "1 chunks · 2400px · size=600"; exit 0; fi; echo "no session: easel open painting first" >&2; exit 1 ;;
-open) touch .open; echo 'easel "painting" open'; echo opens >> opens.log ;;
+open) if [ -f open.waits ]; then w=$(cat open.waits); i=0; while [ ! -f "$w" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+      [ -f "$w" ] || { echo "no $w came" >&2; exit 1; }; fi
+    touch .open; echo 'easel "painting" open'; echo opens >> opens.log ;;
 close) rm -f .open; echo closed ;;
 do) lua=$(cat); case "$lua" in *boom*) echo 'runtime error: [string "chunk 2"]:1: boom'; echo '(the chunk failed and changed nothing)'; exit 1 ;; esac
     mkdir -p paintings/lua; printf -- '--@ chunk\n%s\n' "$lua" >> paintings/lua/painting.lua; echo "day 1, 09:30"; echo "ok · chunk 1 (0.10 s to compute)" ;;

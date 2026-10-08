@@ -40,6 +40,9 @@ type Daemon struct {
 	// NoHeal: no automatic jobs (tests: a heal started by the poll an
 	// action kicks would outlive the test that set up its studio)
 	NoHeal bool
+	// HealJobs: how many automatic replays (views, clips) run at once across
+	// the studios; finishes, a few seconds each, don't count (heal.go)
+	HealJobs int
 
 	hub *Hub
 
@@ -51,7 +54,7 @@ type Daemon struct {
 
 func NewDaemon(repo, studios string) *Daemon {
 	d := &Daemon{Repo: repo, Engine: filepath.Join(repo, "engine"), Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute,
-		Errors: NewErrLog(filepath.Join(repo, "logs/error.log"))}
+		HealJobs: defaultHealJobs(), Errors: NewErrLog(filepath.Join(repo, "logs/error.log"))}
 	d.Procs = scanProcs
 	d.Launch = d.launchPainter
 	d.Push = d.pushExe

@@ -42,6 +42,7 @@ func main() {
 	exe := flag.String("exe", "http://127.0.0.1:7777", "exe's API, for POST /v1/push (empty: no pushes)")
 	exeConfig := flag.String("exe-config", filepath.Join(home, ".exe/config.json"), "exe's config, read for its api_token")
 	errors := flag.String("errors", "", "the error log (default <repo>/logs/error.log); a scratch daemon gives its own")
+	healJobs := flag.Int("heal-jobs", defaultHealJobs(), "automatic replays (views, clips) at once across the studios (default: a sixth of the cores, at least one)")
 	flag.Parse()
 	if *studios == "" {
 		*studios = filepath.Join(*repo, "studios")
@@ -52,6 +53,7 @@ func main() {
 	d := NewDaemon(*repo, *studios)
 	d.Engine = *engine
 	d.Claude, d.Node, d.Exe = *claude, *node, *exe
+	d.HealJobs = max(1, *healJobs)
 	if *errors != "" {
 		d.Errors = NewErrLog(*errors)
 	}

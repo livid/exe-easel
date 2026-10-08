@@ -247,7 +247,13 @@ func exists(p string) bool {
 // The caller holds st.mu.
 func (st *studioState) compute(painting bool) Studio {
 	dir := st.dir
-	o := Studio{Name: st.name, Box: "default", Job: st.job, Error: st.errMsg}
+	o := Studio{Name: st.name, Box: "default", Error: st.errMsg}
+	if st.job != nil {
+		// a copy: a running job changes its kind (a finish turning into its
+		// clip, views into theirs) while the object is being encoded
+		job := *st.job
+		o.Job = &job
+	}
 	if st.preparing {
 		o.State = "preparing"
 		return o

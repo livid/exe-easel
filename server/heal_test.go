@@ -254,3 +254,212 @@ func TestRenderViewsWithTheEasel(t *testing.T) {
 		t.Fatalf("looks left in the painter's folder: %d", len(entries))
 	}
 }
+
+// Finishes start first, then views, then clips; within a kind the newest
+// log first.
+func TestHealOrder(t *testing.T) {
+	now := time.Now()
+	st := func(name string) *studioState { return &studioState{name: name} }
+	wants := []healWant{
+		{st("old-clip"), []string{"clip"}, now.Add(-3 * time.Hour)},
+		{st("new-views"), []string{"views", "clip"}, now.Add(-time.Minute)},
+		{st("old-finish"), []string{"finish", "views", "clip"}, now.Add(-4 * time.Hour)},
+		{st("old-views"), []string{"views"}, now.Add(-2 * time.Hour)},
+		{st("new-finish"), []string{"finish"}, now.Add(-2 * time.Minute)},
+	}
+	healOrder(wants)
+	var got []string
+	for _, w := range wants {
+		got = append(got, w.st.name)
+	}
+	want := "new-finish old-finish new-views old-views old-clip"
+	if strings.Join(got, " ") != want {
+		t.Fatalf("order %v, want %s", got, want)
+	}
+}
+
+// healScripts writes the engine scripts the heal runs, as stand-ins: a
+// finish copies the studio's fixture as its picture; a replay says it began
+// (clip.started), waits for the studio's views when clip.after-views is
+// there, then for clip.release, and writes the movie.
+func healScripts(t *testing.T, d *Daemon) {
+	t.Helper()
+	dir := filepath.Join(d.Engine, "scripts")
+	os.MkdirAll(dir, 0o755)
+	studio := `studio=$(dirname "$(dirname "$(dirname "$1")")")` + "\n"
+	wait := func(f, words string) string {
+		return `i=0; while [ ! -f ` + f + ` ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done; [ -f ` + f + ` ] || { echo "` + words + `" >&2; exit 1; }` + "\n"
+	}
+	os.WriteFile(filepath.Join(dir, "finish_painting"), []byte("#!/bin/sh\n"+studio+`cp "$studio/fixture.png" "$2"`+"\n"), 0o755)
+	os.WriteFile(filepath.Join(dir, "replay_clip"), []byte("#!/bin/sh\n"+studio+
+		`touch "$studio/clip.started"`+"\n"+
+		`if [ -f "$studio/clip.after-views" ]; then `+wait(`"$studio/out/app/views/`+viewsStamp+`"`, "the views never came")+"fi\n"+
+		wait(`"$studio/clip.release"`, "never released")+
+		`echo movie > "$2"`+"\n"), 0o755)
+}
+
+// a stub studio whose painter ended by itself an hour ago, wanting all three
+func healReady(t *testing.T, d *Daemon, studios, name string) *studioState {
+	t.Helper()
+	dir := makeStudio(t, studios, name)
+	logPath := filepath.Join(dir, "paintings/lua/painting.lua")
+	os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "out/claude/runs.log"), []byte("x start model=m\nx end status=0\n"), 0o644)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(logPath, old, old)
+	return d.state(name)
+}
+
+func jobOf(st *studioState) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.job == nil {
+		return ""
+	}
+	return st.job.Kind
+}
+
+func waitFor(t *testing.T, what string, ok func() bool) {
+	t.Helper()
+	for i := 0; i < 600; i++ { // 15 s: a stub easel gives up on its open after 10
+		if ok() {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("waited in vain for %s", what)
+}
+
+// A heal pass starts every finish, and replays up to HealJobs at once, each
+// studio's views and clip side by side.
+func TestHealRunsSeveral(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	d.NoHeal, d.HealQuiet, d.HealJobs = false, 0, 2
+	healScripts(t, d)
+	var sts []*studioState
+	for _, n := range []string{"a", "b", "c", "d"} {
+		sts = append(sts, healReady(t, d, studios, n))
+	}
+	t.Cleanup(func() {
+		for _, st := range sts {
+			st.yieldAuto()
+		}
+	})
+	// a pass as the poll makes it: under pollMu, past the ten seconds
+	pass := func() {
+		d.pollMu.Lock()
+		d.healAt = time.Time{}
+		d.heal()
+		d.pollMu.Unlock()
+	}
+	// first pass: all four finish (they don't count against HealJobs)
+	pass()
+	for _, st := range sts {
+		if k := jobOf(st); k != "finish" && !exists(filepath.Join(st.dir, "out/final.jpg")) {
+			t.Fatalf("%s: job %q after the first pass, want its finish", st.name, k)
+		}
+	}
+	for _, st := range sts {
+		waitFor(t, st.name+"'s picture", func() bool { return jobOf(st) == "" && exists(filepath.Join(st.dir, "out/final.jpg")) })
+	}
+	// second pass: two replays, no more
+	pass()
+	running := 0
+	for _, st := range sts {
+		waitFor(t, st.name+"'s views", func() bool { k := jobOf(st); return k == "" || k == "clip" })
+		if jobOf(st) == "clip" {
+			running++
+			if !viewsFresh(st.dir) {
+				t.Fatalf("%s films without its views", st.name)
+			}
+		}
+	}
+	if running != 2 {
+		t.Fatalf("%d replays at once, want HealJobs (2)", running)
+	}
+	// a third pass with both slots taken starts nothing
+	pass()
+	n := 0
+	for _, st := range sts {
+		if jobOf(st) != "" {
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d jobs after a full pass, want 2", n)
+	}
+	// released, the two film; the next pass takes the other two
+	for _, st := range sts {
+		os.WriteFile(filepath.Join(st.dir, "clip.release"), nil, 0o644)
+	}
+	for _, st := range sts {
+		if exists(filepath.Join(st.dir, "clip.started")) {
+			waitFor(t, st.name+"'s movie", func() bool { return jobOf(st) == "" && exists(filepath.Join(st.dir, "out/replay.mp4")) })
+		}
+	}
+	pass()
+	for _, st := range sts {
+		waitFor(t, st.name+"'s movie", func() bool { return jobOf(st) == "" && exists(filepath.Join(st.dir, "out/replay.mp4")) })
+		if need := healNeed(st.dir, 0, time.Now()); need != "" {
+			t.Fatalf("%s still wants %q", st.name, need)
+		}
+	}
+}
+
+// The views and the clip of one studio run at once: here each waits for the
+// other (the easel opens only once the replay has begun, the replay ends
+// only once the views are kept), so one after the other would fail. The
+// job reads views, then clip.
+func TestViewsAndClipSideBySide(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	healScripts(t, d)
+	st := healReady(t, d, studios, "s")
+	touch(t, filepath.Join(st.dir, "out/final.png"), time.Now())
+	os.WriteFile(filepath.Join(st.dir, "open.waits"), []byte("clip.started"), 0o644)
+	os.WriteFile(filepath.Join(st.dir, "clip.after-views"), nil, 0o644)
+	needs := healNeeds(st.dir, 0, time.Now())
+	if strings.Join(needs, " ") != "views clip" {
+		t.Fatalf("needs %v", needs)
+	}
+	if err := d.startHeal(st, needs); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.yieldAuto)
+	waitFor(t, "the job to turn to its clip", func() bool { return jobOf(st) == "clip" })
+	if !viewsFresh(st.dir) {
+		t.Fatal("the job turned to its clip before the views were kept")
+	}
+	os.WriteFile(filepath.Join(st.dir, "clip.release"), nil, 0o644)
+	waitFor(t, "the movie", func() bool { return jobOf(st) == "" && exists(filepath.Join(st.dir, "out/replay.mp4")) })
+	st.mu.Lock()
+	msg := st.errMsg
+	st.mu.Unlock()
+	if msg != "" || exists(healPath(st.dir)) {
+		t.Fatalf("error %q, heal.json %v", msg, exists(healPath(st.dir)))
+	}
+}
+
+// Views that fail are their own failure; the clip beside them still films.
+func TestViewsFailClipFilms(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	healScripts(t, d)
+	st := healReady(t, d, studios, "f")
+	touch(t, filepath.Join(st.dir, "out/final.png"), time.Now())
+	os.WriteFile(filepath.Join(st.dir, "open.waits"), []byte("never"), 0o644) // the easel won't open
+	os.WriteFile(filepath.Join(st.dir, "clip.release"), nil, 0o644)
+	if err := d.startHeal(st, []string{"views", "clip"}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(st.yieldAuto)
+	waitFor(t, "the job to end", func() bool { return jobOf(st) == "" && exists(filepath.Join(st.dir, "out/replay.mp4")) })
+	st.mu.Lock()
+	msg := st.errMsg
+	st.mu.Unlock()
+	failed := readHeal(st.dir)
+	if !strings.Contains(msg, "didn't open") || failed["views"].Log == "" || failed["clip"].Log != "" {
+		t.Fatalf("error %q, heal.json %v", msg, failed)
+	}
+	if need := healNeed(st.dir, 0, time.Now()); need != "" {
+		t.Fatalf("still wants %q after the views failed on this log and the clip was made", need)
+	}
+}

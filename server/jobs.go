@@ -362,33 +362,41 @@ func (d *Daemon) runJob(st *studioState, kind string, auto bool, work func(ctx c
 		cancelled := ctx.Err() != nil
 		cancel()
 		st.mu.Lock()
-		kind := st.job.Kind // a finish may have turned into its clip
+		kind := st.job.Kind // a finish may have turned into its clip, views into theirs
 		st.job, st.cancel, st.jobDone = nil, nil, nil
+		failed := err != nil && !cancelled
+		if failed {
+			st.errMsg = err.Error()
+		}
+		st.mu.Unlock()
 		switch {
 		case cancelled:
 			log.Printf("%s %s: cancelled", kind, st.name)
-		case err != nil:
-			st.errMsg = err.Error()
-			log.Printf("%s %s: %v", kind, st.name, err)
-		}
-		if err != nil && !cancelled {
-			what := kind
-			if auto {
-				what = "heal " + kind
-			}
-			d.Errors.Add("daemon", "error", st.name, what, err.Error(), nil)
-		}
-		st.mu.Unlock()
-		// a job killed from outside (a signal the daemon didn't send: someone
-		// stopping a stray process, a restart) says nothing about the
-		// painting: the heal tries it again rather than wait for the log
-		if auto && err != nil && !cancelled && !killedRe.MatchString(err.Error()) {
-			healFailed(st.dir, kind, err)
+		case failed:
+			d.jobFailed(st, kind, auto, err)
 		}
 		close(done)
 		d.Kick()
 	}()
 	return nil
+}
+
+// jobFailed tells of a job (or a part of one) that failed: the daemon's
+// log, the error log, and for an automatic one heal.json, so the heal waits
+// for the log to change. The caller has set the studio's errMsg.
+func (d *Daemon) jobFailed(st *studioState, kind string, auto bool, err error) {
+	log.Printf("%s %s: %v", kind, st.name, err)
+	what := kind
+	if auto {
+		what = "heal " + kind
+	}
+	d.Errors.Add("daemon", "error", st.name, what, err.Error(), nil)
+	// a job killed from outside (a signal the daemon didn't send: someone
+	// stopping a stray process, a restart) says nothing about the
+	// painting: the heal tries it again rather than wait for the log
+	if auto && !killedRe.MatchString(err.Error()) {
+		healFailed(st.dir, kind, err)
+	}
 }
 
 // yieldAuto cancels the studio's automatic job, if one runs, and waits for
