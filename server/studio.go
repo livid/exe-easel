@@ -78,6 +78,8 @@ type studioState struct {
 
 	// an easel the daemon opened for look/do
 	ownEasel bool
+	opening  bool   // its `easel open` (a replay of the log) is running
+	openErr  string // how the last open failed, said once
 	lastUse  time.Time
 
 	// the log's chunk count, by its stamp

@@ -341,6 +341,13 @@ func (d *Daemon) runJob(st *studioState, kind string, auto bool, work func(ctx c
 			st.errMsg = err.Error()
 			log.Printf("%s %s: %v", kind, st.name, err)
 		}
+		if err != nil && !cancelled {
+			what := kind
+			if auto {
+				what = "heal " + kind
+			}
+			d.Errors.Add("daemon", "error", st.name, what, err.Error(), nil)
+		}
 		st.mu.Unlock()
 		if auto && err != nil && !cancelled {
 			healFailed(st.dir, kind, err)

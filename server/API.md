@@ -134,17 +134,42 @@ characters or nothing.
   job's words land in the studio's `error`; the scripts' output is in
   `out/app/finish.log` / `clip.log`.
 - `POST /v1/studios/{name}/look` `{"mode", "crop", "size", "light", "grid", "palette",
-  "scratch", "survey"}` → `{"said", "images": [path…], "w", "h"}`: an `easel look` for the
-  app, the PNG moved to `out/app/looks/<uuid>.png` (so the painter's look folder
-  only holds the painter's). Opens the easel when it is closed (replaying the log
-  from its save); an easel the daemon opened closes after 10 idle minutes (at
-  start the daemon adopts an easel left open with no painter, so a restart doesn't
-  leave one open for good). 409 while painting or while a job runs; 422 with the
-  easel's words when the look fails.
-- `POST /v1/studios/{name}/do` `{"lua", "scratch", "new_scratch"}` → `{"reply"}` or
-  422 `{"error"}` (the easel's words: a chunk that fails changes nothing). A hand
-  at the easel: the chunk is logged like a painter's. 409 while painting.
+  "scratch", "survey"}` and `POST /v1/studios/{name}/do` `{"lua", "scratch", "new_scratch"}`:
+  a look for the app, or a chunk by hand (logged like a painter's). **These two
+  answer slowly**: exe's relay gives up on headers after 30 s and a chunk can run
+  for minutes, so the daemon sends 200 and its headers at once, a space every
+  15 s, then one JSON body, which is one of:
+  - the answer: look `{"said", "images": [path…], "w", "h"}` (the PNG moved to
+    `out/app/looks/<uuid>.png`, so the painter's look folder only holds the
+    painter's), do `{"reply"}`;
+  - `{"opening": "Opening the easel: replaying chunk 12 of 55…"}`: the easel was
+    closed. Its save holds only the canvas, so an open replays the whole log
+    (minutes for a long painting; `easel open` cut off by a clock leaves no easel),
+    and the daemon runs it in the background, reading the progress from the
+    easel's `server.log`. Ask again (the app does every 1.5 s) until it answers.
+    An easel the daemon opened closes after 10 idle minutes;
+  - `{"error", "status"}`: 409 while painting, 422 when the easel refused (a chunk
+    that fails changes nothing; a look it couldn't make), 502 when the easel
+    didn't open.
+  A plain whole-canvas look (no mode, crop, size, light, grid, palette, scratch or
+  survey) on a closed easel whose `live.png` is newer than the log answers at once
+  with that picture: the canvas exactly as the easel saved it when it closed.
 - `POST /v1/studios/{name}/close` → 204: closes an easel nobody paints at.
+
+## The error log
+
+`<repo>/logs/error.log` (`-errors` names another; Git ignores `logs/`): one JSON
+object a line, newest last, rotated to `error.log.1` past 5 MB; the same error
+from the same source once in 10 s. Every entry has `t`, `src` (`app` or
+`daemon`), `level` (`error`, `warn`), `msg`, and `studio` and `where` when known.
+
+- `POST /v1/log` `{"level", "msg", "where", "studio", …}` → 204: the app's own
+  (a call that failed or answered 500 and up, an alert it showed, a script
+  error or rejected promise, a picture or the replay that didn't load, an event
+  stream that keeps failing), with `tab`, `view`, `ua` and whatever else it adds.
+- The daemon writes its answers of 500 and up, failed jobs and heals, and
+  easels that didn't open.
+- `GET /v1/log?n=100` → `{"path", "entries": [...]}`, oldest first.
 
 ## Self-heal
 

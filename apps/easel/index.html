@@ -123,8 +123,8 @@ body.mobile #bar button.g .ix { display: block; margin: 0 auto; }
 #cv-img { position: absolute; inset: 8px; width: calc(100% - 16px); height: calc(100% - 16px);
   object-fit: contain; display: block; }
 #cv-img[hidden] { display: none; }
-#cv-busy { position: absolute; right: 8px; top: 8px; font-size: 10px; color: #555; background: rgba(255,255,255,.85);
-  padding: 0 4px; display: none; }
+#cv-busy { position: absolute; right: 8px; top: 8px; font-size: 11px; line-height: 16px; color: #333; background: rgba(255,255,255,.9);
+  border: 1px solid var(--g600); padding: 1px 6px; display: none; max-width: calc(100% - 16px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #cv-busy.on { display: block; }
 
 /* Session: the painter's own record, one row an event */
@@ -535,14 +535,42 @@ const LS = k => "easel." + k;
 const lsGet = k => { try { return localStorage.getItem(LS(k)); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(LS(k), v); } catch (e) {} };
 
+// ---- the error log: what goes wrong here is written to exe-art's
+// logs/error.log through the daemon (POST /v1/log), with where it happened,
+// so it can be read and fixed later; the same error once in 10 s ----
+const reported = new Map();
+function report(level, msg, extra = {}) {
+  msg = String(msg || "").slice(0, 4000);
+  if (!msg) return;
+  const key = level + "\u0000" + msg + "\u0000" + (extra.where || "");
+  const now = Date.now();
+  if (reported.get(key) > now - 10000) return;
+  reported.set(key, now);
+  // (an error while the page starts can come before sel, tab and view exist)
+  let where = {};
+  try { where = { studio: sel || "", tab, view }; } catch (e) {}
+  const body = Object.assign(where, { level, msg, ua: navigator.userAgent, mobile: MOBILE }, extra);
+  const headers = { "Content-Type": "application/json" };
+  if (TOKEN) headers["Authorization"] = "Bearer " + TOKEN;
+  // straight to fetch, never through api(): a failing log must not report itself
+  try { fetch(API + "/log", { method: "POST", headers, body: JSON.stringify(body), keepalive: true }).catch(() => {}); } catch (e) {}
+}
+window.addEventListener("error", e => report("error", e.message || "script error", { where: "script", stack: e.error && e.error.stack || "", source: (e.filename || "") + ":" + e.lineno + ":" + e.colno }));
+window.addEventListener("unhandledrejection", e => report("error", (e.reason && e.reason.message) || String(e.reason), { where: "promise", stack: e.reason && e.reason.stack || "" }));
+
 async function api(path, opts = {}) {
   opts.headers = Object.assign({}, opts.headers);
   if (TOKEN) opts.headers["Authorization"] = "Bearer " + TOKEN;
   opts.cache = "no-store";
-  const r = await fetch(path.startsWith("/v1/svc/") || path.startsWith("/v1/workspace") ? path : API + path, opts);
+  const url = path.startsWith("/v1/svc/") || path.startsWith("/v1/workspace") ? path : API + path;
+  const where = (opts.method || "GET") + " " + url.replace(API, "");
+  let r;
+  try { r = await fetch(url, opts); }
+  catch (e) { report("error", e.message || "the request failed", { where }); throw e; }
   if (!r.ok) {
     let msg = "HTTP " + r.status;
     try { const j = await r.json(); if (j && j.error) msg = j.error; } catch (e) {}
+    if (r.status >= 500) report("error", msg, { where, status: r.status });
     const err = new Error(msg); err.status = r.status; throw err;
   }
   if (r.status === 204) return null;
@@ -550,6 +578,28 @@ async function api(path, opts = {}) {
   return ct.includes("json") ? r.json() : r.text();
 }
 const json = (method, path, body) => api(path, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+// A look or a chunk at the easel. The daemon sends its headers at once and
+// its answer when ready, so a failure comes as {error, status} in a 200;
+// a closed easel answers {opening: "replaying chunk 12 of 55…"} while it
+// opens (the whole log is painted again), and the call is made again until
+// it is open. progress(words) shows how far it has got; stale() says the
+// window has moved on, and the wait ends quietly (null).
+async function easelCall(path, body, progress, stale) {
+  for (;;) {
+    const r = await json("POST", path, body);
+    if (r && r.opening) {
+      progress && progress(r.opening);
+      await new Promise(ok => setTimeout(ok, 1500));
+      if (stale && stale()) return null;
+      continue;
+    }
+    if (r && r.error) {
+      if (r.status >= 500) report("error", r.error, { where: "POST " + path, status: r.status });
+      const err = new Error(r.error); err.status = r.status; throw err;
+    }
+    return r;
+  }
+}
 const withToken = u => TOKEN ? u + (u.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(TOKEN) : u;
 const fileURL = (name, path, w) => withToken(API + "/studios/" + encodeURIComponent(name) + "/files/" + path.split("/").map(encodeURIComponent).join("/") + (w ? "?w=" + w : ""));
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -767,16 +817,18 @@ function showImage(url, w, h, words) {
     img.src = url; img.hidden = false;
     if (!w) $("#cv-dims").textContent = words + " · " + pre.naturalWidth + " × " + pre.naturalHeight;
   };
-  pre.onerror = () => { if (shownURL === url) $("#cv-note").textContent = "This picture didn’t load."; };
+  pre.onerror = () => { if (shownURL === url) { $("#cv-note").textContent = "This picture didn’t load."; report("error", "a picture didn’t load", { where: "canvas " + view, url: url.replace(/token=[^&]*/, "token=…") }); } };
   pre.src = url;
 }
 async function easelLook(v) {
   const s = cur(), name = s.name, seq = ++lookSeq;
-  const busyEl = $("#cv-busy"); busyEl.classList.add("on");
+  const busyEl = $("#cv-busy"); busyEl.textContent = "Looking…"; busyEl.classList.add("on");
   try {
     const body = v === "palette" ? { palette: true } : v === "now" ? {} : { mode: v };
-    const r = await json("POST", "/studios/" + encodeURIComponent(name) + "/look", body);
-    if (seq !== lookSeq || sel !== name) return;
+    const r = await easelCall("/studios/" + encodeURIComponent(name) + "/look", body,
+      words => { if (seq === lookSeq) busyEl.textContent = words; },
+      () => seq !== lookSeq || sel !== name);
+    if (!r || seq !== lookSeq || sel !== name) return;
     shownFor = name + "|" + v;
     const label = $(`#view option[value="${v}"]`).textContent;
     if (r.images && r.images[0]) showImage(fileURL(name, r.images[0]), r.w, r.h, label);
@@ -1026,7 +1078,10 @@ async function ezRun() {
   $("#ez-run").disabled = true;
   ezLine([["in", lua.trim()]]);
   try {
-    const r = await json("POST", "/studios/" + encodeURIComponent(s.name) + "/do", { lua, scratch });
+    let said = null;
+    const r = await easelCall("/studios/" + encodeURIComponent(s.name) + "/do", { lua, scratch },
+      words => { if (said !== words) { said = words; ezLine("sys", words); } }, () => sel !== s.name);
+    if (!r) return;
     ezLine([["out", (r.reply || "").trim()]]);
     if ($("#ez-autolook").checked) await ezLook(true);
   } catch (e) { ezLine([["err", e.message]]); }
@@ -1036,8 +1091,10 @@ async function ezLook(quiet) {
   const s = cur(); if (!s) return;
   const scratch = $("#ez-scratch").checked;
   try {
-    const r = await json("POST", "/studios/" + encodeURIComponent(s.name) + "/look", scratch ? { scratch: true } : {});
-    if (r.images && r.images[0]) {
+    let said = null;
+    const r = await easelCall("/studios/" + encodeURIComponent(s.name) + "/look", scratch ? { scratch: true } : {},
+      words => { if (said !== words) { said = words; ezLine("sys", words); } }, () => sel !== s.name);
+    if (r && r.images && r.images[0]) {
       const img = document.createElement("img"), w = r.w || 1000, h = r.h || 700, tw = Math.min(360, w);
       img.width = tw; img.height = Math.round(tw * h / w); img.alt = "";
       img.src = fileURL(s.name, r.images[0], tw * DPR());
@@ -1118,7 +1175,7 @@ function fmtClock(s) {
   v.addEventListener("loadedmetadata", () => { setThumb(); setTime(); });
   v.addEventListener("play", () => { play.innerHTML = MVQ.pause; play.title = "Pause"; });
   v.addEventListener("pause", () => { play.innerHTML = MVQ.play; play.title = "Play"; });
-  v.addEventListener("error", () => { if (v.getAttribute("src")) $("#rp-meta").textContent = "can’t play this movie"; });
+  v.addEventListener("error", () => { if (v.getAttribute("src")) { $("#rp-meta").textContent = "can’t play this movie"; report("error", "the replay can’t play: " + (v.error ? "media error " + v.error.code + " " + (v.error.message || "") : "unknown"), { where: "replay" }); } });
   play.addEventListener("click", () => { if (v.paused) v.play().catch(e => setStatus(e.message, true)); else v.pause(); });
   snd.addEventListener("click", () => { v.muted = !v.muted; snd.innerHTML = v.muted ? MVQ.sndmute : MVQ.snd; });
   back.addEventListener("click", () => { v.pause(); v.currentTime = Math.max(0, v.currentTime - 1 / 30); });
@@ -1387,6 +1444,7 @@ function dialog(html, ok, onClose) {
 }
 let alertResolve = null;
 function alertBox(message, detail, cancelLabel, okLabel) {
+  if (!cancelLabel) report("warn", message + (detail ? " — " + detail : ""), { where: "alert" });
   const veil = $("#veil");
   const had = veil.classList.contains("on");
   $("#a-msg").textContent = message;
@@ -1428,7 +1486,7 @@ function openStream() {
   // only one that keeps failing is worth a word on the status line
   es.onerror = () => {
     es.close(); es = null;
-    if (++esFails >= 2) setStatus("The Easel daemon isn’t answering; trying again…", true);
+    if (++esFails >= 2) { setStatus("The Easel daemon isn’t answering; trying again…", true); if (esFails === 2) report("warn", "the event stream keeps failing", { where: "events" }); }
     clearTimeout(esRetry); esRetry = setTimeout(openStream, esFails >= 2 ? 5000 : 1000);
   };
 }

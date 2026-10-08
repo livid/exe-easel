@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -203,6 +205,69 @@ func (d *Daemon) easelBusy(st *studioState) error {
 	return nil
 }
 
+// openingError: the easel is on its way; the app asks again.
+type openingError struct{ progress string }
+
+func (e *openingError) Error() string { return e.progress }
+
+// resumeRe: the line the easel's server writes as it replays the log on
+// open (out/easel/painting/server.log).
+var resumeRe = regexp.MustCompile(`resum(?:ing|ed) chunk (\d+)/(\d+)`)
+
+func openProgress(dir string) string {
+	b, _ := os.ReadFile(filepath.Join(dir, "out/easel/painting/server.log"))
+	ms := resumeRe.FindAllSubmatch(b, -1)
+	if len(ms) == 0 {
+		return "Opening the easel…"
+	}
+	m := ms[len(ms)-1]
+	return fmt.Sprintf("Opening the easel: replaying chunk %s of %s…", m[1], m[2])
+}
+
+// easelReady says whether the studio's easel is open for the app. A closed
+// one is opened in the background and the call answers at once with how far
+// it has got: the save holds only the canvas, so an open replays the whole
+// log (ten minutes for a long painting), and `easel open` cut off by a
+// clock leaves no easel at all. The app asks again until it is ready.
+func (d *Daemon) easelReady(st *studioState) (bool, error) {
+	st.mu.Lock()
+	opening, openErr := st.opening, st.openErr
+	st.openErr = ""
+	st.mu.Unlock()
+	if opening {
+		return false, &openingError{openProgress(st.dir)}
+	}
+	if openErr != "" {
+		return false, &httpError{502, openErr}
+	}
+	out, code := easelRun(st.dir, []string{"status"}, "", 20*time.Second)
+	if code == 0 {
+		if m := rebuildRe.FindStringSubmatch(strings.TrimSpace(out)); m != nil {
+			return false, &openingError{fmt.Sprintf("The easel is rebuilding: chunk %s of %s…", m[1], m[2])}
+		}
+		return true, nil
+	}
+	st.mu.Lock()
+	st.opening, st.ownEasel, st.lastUse = true, true, time.Now()
+	st.mu.Unlock()
+	go func() {
+		out, code := easelRun(st.dir, []string{"open"}, "", waitOpen)
+		st.mu.Lock()
+		st.opening, st.lastUse = false, time.Now()
+		if code != 0 {
+			st.openErr = "the easel didn't open: " + lastLines(out, 6)
+			st.ownEasel = false
+		}
+		msg := st.openErr
+		st.mu.Unlock()
+		if code != 0 {
+			d.Errors.Add("daemon", "error", st.name, "easel open", msg, nil)
+		}
+		d.Kick()
+	}()
+	return false, &openingError{"Opening the easel…"}
+}
+
 // atEasel runs one command at an open easel for the app.
 func (d *Daemon) atEasel(st *studioState, args []string, input string, wait time.Duration) (string, int, error) {
 	st.yieldAuto() // a hand at the easel comes before a heal
@@ -211,14 +276,10 @@ func (d *Daemon) atEasel(st *studioState, args []string, input string, wait time
 	if err := d.easelBusy(st); err != nil {
 		return "", 0, err
 	}
-	opened, err := ensureOpen(st.dir)
-	if err != nil {
-		return "", 0, &httpError{502, err.Error()}
+	if ok, err := d.easelReady(st); !ok {
+		return "", 0, err
 	}
 	st.mu.Lock()
-	if opened {
-		st.ownEasel = true
-	}
 	st.lastUse = time.Now()
 	st.mu.Unlock()
 	out, code := easelRun(st.dir, args, input, wait)
@@ -229,6 +290,9 @@ func (d *Daemon) atEasel(st *studioState, args []string, input string, wait time
 }
 
 func (d *Daemon) Look(st *studioState, r LookReq) (*LookResult, error) {
+	if res := d.savedCanvas(st, r); res != nil {
+		return res, nil
+	}
 	out, code, err := d.atEasel(st, r.args(), "", waitOther)
 	if err != nil {
 		return nil, err
@@ -282,6 +346,43 @@ func (d *Daemon) Look(st *studioState, r LookReq) (*LookResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// savedCanvas answers a plain whole-canvas look on a closed easel with the
+// picture the easel saved as it closed (live.png): the canvas exactly as the
+// log left it, without the minutes a reopen takes. Any other look, an open
+// easel, or a log written after the save goes to the easel.
+func (d *Daemon) savedCanvas(st *studioState, r LookReq) *LookResult {
+	if r.Mode != "" || r.Crop != "" || r.Size != 0 || r.Light != "" || r.Grid != nil || r.Palette || r.Scratch || r.Survey {
+		return nil
+	}
+	st.mu.Lock()
+	busy := st.opening || st.ownEasel
+	st.mu.Unlock()
+	live := filepath.Join(st.dir, "out/easel/painting/live.png")
+	fi, err := os.Stat(live)
+	lg, lerr := os.Stat(filepath.Join(st.dir, "paintings/lua/painting.lua"))
+	if busy || err != nil || lerr != nil || fi.ModTime().Before(lg.ModTime()) || exists(filepath.Join(st.dir, "out/easel/painting/sock")) {
+		return nil
+	}
+	f, err := os.Open(live)
+	if err != nil {
+		return nil
+	}
+	cfg, _, err := image.DecodeConfig(f)
+	f.Close()
+	if err != nil {
+		return nil
+	}
+	rel := "out/app/looks/" + newID() + ".png"
+	os.MkdirAll(filepath.Join(st.dir, "out/app/looks"), 0o755)
+	b, err := os.ReadFile(live)
+	if err != nil || os.WriteFile(filepath.Join(st.dir, rel), b, 0o644) != nil {
+		return nil
+	}
+	// a 2400 px save shown as the easel's 1000 px look would: its size is said as the canvas's
+	w, h := cfg.Width, cfg.Height
+	return &LookResult{Said: rel + fmt.Sprintf(" (%dx%d)", w, h) + "\n(the canvas as saved when the easel last closed)", Images: []string{rel}, W: w, H: h}
 }
 
 // DoReq is POST …/do.
@@ -340,9 +441,9 @@ func (d *Daemon) closeIdle() {
 	d.mu.Unlock()
 	for _, st := range sts {
 		st.mu.Lock()
-		own, last := st.ownEasel, st.lastUse
+		own, last, opening := st.ownEasel, st.lastUse, st.opening
 		st.mu.Unlock()
-		if !own {
+		if !own || opening {
 			continue
 		}
 		if d.paintingNow(st) {

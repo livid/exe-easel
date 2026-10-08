@@ -36,9 +36,123 @@ func decode(r *http.Request, v any) error {
 	return nil
 }
 
+// answerSlow sends the headers now and the answer when it is ready: exe's
+// relay gives up on a service that hasn't sent its headers in 30 s, and a
+// chunk can run for minutes. A space goes out every 15 s meanwhile (JSON
+// passes over it) so no proxy takes the line for idle. With the headers
+// out the status is 200 whatever happens: the body is the answer, or
+// {"opening": words} while the easel opens, or {"error", "status"}.
+func (d *Daemon) answerSlow(w http.ResponseWriter, r *http.Request, st *studioState, work func() (any, error)) {
+	h := w.Header()
+	h.Set("Content-Type", "application/json")
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(200)
+	fl, _ := w.(http.Flusher)
+	if fl != nil {
+		fl.Flush()
+	}
+	type result struct {
+		v   any
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() { v, err := work(); ch <- result{v, err} }()
+	tick := time.NewTicker(15 * time.Second)
+	defer tick.Stop()
+	enc := json.NewEncoder(w)
+	for {
+		select {
+		case res := <-ch:
+			var oe *openingError
+			var he *httpError
+			switch {
+			case res.err == nil:
+				enc.Encode(res.v)
+			case errors.As(res.err, &oe):
+				enc.Encode(map[string]string{"opening": oe.progress})
+			case errors.As(res.err, &he):
+				if he.code >= 500 {
+					d.Errors.Add("daemon", "error", st.name, r.Method+" "+r.URL.Path, he.msg, map[string]any{"status": he.code})
+				}
+				enc.Encode(map[string]any{"error": he.msg, "status": he.code})
+			default:
+				d.Errors.Add("daemon", "error", st.name, r.Method+" "+r.URL.Path, res.err.Error(), map[string]any{"status": 500})
+				enc.Encode(map[string]any{"error": res.err.Error(), "status": 500})
+			}
+			return
+		case <-tick.C:
+			w.Write([]byte(" "))
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+	}
+}
+
+// statusWriter keeps what a handler answered, to log a 500 and up.
+type statusWriter struct {
+	http.ResponseWriter
+	code int
+	body []byte
+}
+
+func (s *statusWriter) WriteHeader(code int) { s.code = code; s.ResponseWriter.WriteHeader(code) }
+func (s *statusWriter) Write(b []byte) (int, error) {
+	if s.code >= 500 && len(s.body) < 4000 {
+		s.body = append(s.body, b...)
+	}
+	return s.ResponseWriter.Write(b)
+}
+func (s *statusWriter) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Handler is the daemon's HTTP API (API.md).
 func (d *Daemon) Handler() http.Handler {
 	mux := http.NewServeMux()
+	logged := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sw := &statusWriter{ResponseWriter: w, code: 200}
+		mux.ServeHTTP(sw, r)
+		if sw.code >= 500 {
+			msg := strings.TrimSpace(string(sw.body))
+			var e struct{ Error string }
+			if json.Unmarshal(sw.body, &e) == nil && e.Error != "" {
+				msg = e.Error
+			}
+			d.Errors.Add("daemon", "error", r.PathValue("name"), r.Method+" "+r.URL.Path, msg, map[string]any{"status": sw.code})
+		}
+	})
+	// the app's own errors, and the newest of everyone's
+	mux.HandleFunc("POST /v1/log", func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(nil, r.Body, 64<<10)
+		var e map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&e); err != nil {
+			writeErr(w, &httpError{400, "bad JSON: " + err.Error()})
+			return
+		}
+		str := func(k string) string { v, _ := e[k].(string); delete(e, k); return v }
+		level, studio, where, msg := str("level"), str("studio"), str("where"), str("msg")
+		if level != "warn" {
+			level = "error"
+		}
+		if msg == "" {
+			writeErr(w, &httpError{400, "msg is what went wrong"})
+			return
+		}
+		delete(e, "t")
+		delete(e, "src")
+		d.Errors.Add("app", level, studio, where, msg, e)
+		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /v1/log", func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+		if n <= 0 || n > 1000 {
+			n = 100
+		}
+		writeJSON(w, 200, map[string]any{"path": d.Errors.Path, "entries": d.Errors.Tail(n)})
+	})
 	mux.HandleFunc("GET /v1/studios", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"studios": d.List()})
 	})
@@ -153,12 +267,7 @@ func (d *Daemon) Handler() http.Handler {
 			writeErr(w, err)
 			return
 		}
-		res, err := d.Look(st, req)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		writeJSON(w, 200, res)
+		d.answerSlow(w, r, st, func() (any, error) { return d.Look(st, req) })
 	}))
 	mux.HandleFunc("POST /v1/studios/{name}/do", d.withStudio(func(w http.ResponseWriter, r *http.Request, st *studioState) {
 		var req DoReq
@@ -166,13 +275,14 @@ func (d *Daemon) Handler() http.Handler {
 			writeErr(w, err)
 			return
 		}
-		reply, err := d.Do(st, req)
-		if err != nil {
-			writeErr(w, err)
-			return
-		}
-		d.Kick()
-		writeJSON(w, 200, map[string]string{"reply": reply})
+		d.answerSlow(w, r, st, func() (any, error) {
+			reply, err := d.Do(st, req)
+			if err != nil {
+				return nil, err
+			}
+			d.Kick()
+			return map[string]string{"reply": reply}, nil
+		})
 	}))
 	mux.HandleFunc("POST /v1/studios/{name}/close", d.withStudio(func(w http.ResponseWriter, r *http.Request, st *studioState) {
 		if err := d.CloseEasel(st); err != nil {
@@ -181,7 +291,7 @@ func (d *Daemon) Handler() http.Handler {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
-	return mux
+	return logged
 }
 
 func (d *Daemon) withStudio(h func(http.ResponseWriter, *http.Request, *studioState)) http.HandlerFunc {

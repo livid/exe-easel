@@ -111,6 +111,29 @@ func call(t *testing.T, method, url string, body any) (int, map[string]any) {
 	return resp.StatusCode, m
 }
 
+// easelCall is how the app calls look and do: the answer's status is in
+// its body once the headers have gone, and while the easel opens it says
+// so and the call is made again.
+func easelCall(t *testing.T, url string, body any) (int, map[string]any) {
+	t.Helper()
+	for i := 0; i < 100; i++ {
+		code, m := call(t, "POST", url, body)
+		if code != 200 {
+			return code, m
+		}
+		if _, opening := m["opening"]; opening {
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+		if st, ok := m["status"].(float64); ok {
+			return int(st), m
+		}
+		return 200, m
+	}
+	t.Fatalf("%s: the easel never opened", url)
+	return 0, nil
+}
+
 func TestAPIStudios(t *testing.T) {
 	d, srv, studios, fp := newTestDaemon(t)
 	dir := makeStudio(t, studios, "one")
@@ -129,14 +152,18 @@ func TestAPIStudios(t *testing.T) {
 
 	// a hand at the easel: do, a failing do, look
 	code, m = call(t, "POST", srv.URL+"/v1/studios/one/do", map[string]any{"lua": "canvas{}"})
+	if _, opening := m["opening"]; code != 200 || !opening {
+		t.Fatalf("a closed easel opens first: %d %v", code, m)
+	}
+	code, m = easelCall(t, srv.URL+"/v1/studios/one/do", map[string]any{"lua": "canvas{}"})
 	if code != 200 || !strings.Contains(m["reply"].(string), "ok") {
 		t.Fatalf("do %d %v", code, m)
 	}
-	code, m = call(t, "POST", srv.URL+"/v1/studios/one/do", map[string]any{"lua": "error('boom')"})
+	code, m = easelCall(t, srv.URL+"/v1/studios/one/do", map[string]any{"lua": "error('boom')"})
 	if code != 422 || !strings.Contains(m["error"].(string), "boom") {
 		t.Fatalf("failing do %d %v", code, m)
 	}
-	code, m = call(t, "POST", srv.URL+"/v1/studios/one/look", map[string]any{"mode": "value"})
+	code, m = easelCall(t, srv.URL+"/v1/studios/one/look", map[string]any{"mode": "value"})
 	if code != 200 {
 		t.Fatalf("look %d %v", code, m)
 	}
@@ -159,7 +186,7 @@ func TestAPIStudios(t *testing.T) {
 	if l := d.List()[0]; l.Latest != "" {
 		t.Fatalf("latest after a value look: %q", l.Latest)
 	}
-	_, m = call(t, "POST", srv.URL+"/v1/studios/one/look", map[string]any{})
+	_, m = easelCall(t, srv.URL+"/v1/studios/one/look", map[string]any{})
 	whole := m["images"].([]any)[0].(string)
 	if l := d.List()[0]; l.Latest != whole || l.Canvas == nil || l.Canvas.W != 40 {
 		t.Fatalf("latest %q canvas %v, want %q", l.Latest, l.Canvas, whole)
@@ -206,7 +233,7 @@ func TestAPIStudios(t *testing.T) {
 		t.Fatalf("state %v", s["state"])
 	}
 	for _, p := range []string{"look", "do", "finish", "clip", "start"} {
-		code, m = call(t, "POST", srv.URL+"/v1/studios/one/"+p, map[string]any{"lua": "x"})
+		code, m = easelCall(t, srv.URL+"/v1/studios/one/"+p, map[string]any{"lua": "x"})
 		if code != 409 {
 			t.Errorf("%s while painting: %d %v", p, code, m)
 		}

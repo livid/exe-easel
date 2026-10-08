@@ -38,10 +38,13 @@ type Daemon struct {
 	HealQuiet time.Duration
 
 	hub *Hub
+
+	Errors *ErrLog // <repo>/logs/error.log
 }
 
 func NewDaemon(repo, studios string) *Daemon {
-	d := &Daemon{Repo: repo, Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute}
+	d := &Daemon{Repo: repo, Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute,
+		Errors: NewErrLog(filepath.Join(repo, "logs/error.log"))}
 	d.Procs = scanProcs
 	d.Launch = d.launchPainter
 	d.Push = d.pushExe

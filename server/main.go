@@ -29,12 +29,16 @@ func main() {
 	node := flag.String("node", filepath.Join(home, ".nvm/versions/node/v24.15.0/bin/node"), "node 24, for the easel MCP server")
 	exe := flag.String("exe", "http://127.0.0.1:7777", "exe's API, for POST /v1/push (empty: no pushes)")
 	exeConfig := flag.String("exe-config", filepath.Join(home, ".exe/config.json"), "exe's config, read for its api_token")
+	errors := flag.String("errors", "", "the error log (default <repo>/logs/error.log); a scratch daemon gives its own")
 	flag.Parse()
 	if *studios == "" {
 		*studios = filepath.Join(*repo, "studios")
 	}
 	d := NewDaemon(*repo, *studios)
 	d.Claude, d.Node, d.Exe = *claude, *node, *exe
+	if *errors != "" {
+		d.Errors = NewErrLog(*errors)
+	}
 	if b, err := os.ReadFile(*exeConfig); err == nil {
 		var c struct {
 			APIToken string `json:"api_token"`
