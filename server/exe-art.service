@@ -1,0 +1,15 @@
+[Unit]
+Description=exe-art: the painters' studios (/www/exe-art/studios), served for the exe desktop's Easel app
+After=network.target
+
+[Service]
+ExecStart=/www/exe-art/server/exe-art -listen 127.0.0.1:7794 -repo /www/exe-art
+Restart=always
+RestartSec=1
+# Painters run in transient units of their own (systemd-run); an easel the
+# daemon opened, or a painter launched with setsid when systemd-run failed,
+# outlives a restart of the daemon.
+KillMode=process
+
+[Install]
+WantedBy=default.target
