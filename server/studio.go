@@ -19,6 +19,10 @@ type Job struct {
 	Kind    string `json:"kind"`
 	Started int64  `json:"started"`
 	Error   string `json:"error"`
+	// Auto: the daemon started it itself, healing a missing or stale
+	// picture or replay (heal.go); a painter or a hand at the easel
+	// cancels it rather than wait for it
+	Auto bool `json:"auto"`
 }
 
 // Studio is the object API.md describes.
@@ -65,6 +69,8 @@ type studioState struct {
 	failed    bool
 	errMsg    string
 	job       *Job
+	cancel    func() // the running job's, to cancel an automatic one
+	jobDone   chan struct{}
 	stopping  bool
 	launched  time.Time // a start asked; the scan may not see it for a moment
 	notify    bool

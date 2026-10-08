@@ -1147,10 +1147,16 @@ function loadReplay() {
   const s = cur(); if (!s) return;
   const v = $("#rp-box video"), note = $("#rp-note");
   $("#rp-save").disabled = !s.clip;
+  // the daemon films every painting by itself once its log rests (heal.go):
+  // there is nothing to press, only something to wait for
   if (!s.clip) {
     if (rpFor) resetReplay();
-    note.textContent = s.state === "replaying" ? "Making the replay: the painting is painted again, stroke by stroke…"
-      : s.chunks ? "No replay yet. Replay… makes one: the painting made again at the pace of the hand." : "Nothing to replay yet.";
+    note.textContent = s.state === "replaying" ? "Making the replay: the painting is painted again, stroke by stroke, and filmed…"
+      : s.state === "painting" ? "The replay is made when the painter stops."
+      : s.state === "finishing" ? "Varnishing first; the replay comes next."
+      : !s.chunks ? "Nothing to replay yet."
+      : s.error ? "No replay: " + s.error.split("\n")[0]
+      : "The replay is on its way: it is made a couple of minutes after the painting last changed.";
     return;
   }
   note.textContent = "";
@@ -1440,8 +1446,10 @@ studioChanged = function (before, s) {
   if (tab === "easel" && before.state !== s.state) { const was = busy(before), now = busy(s); if (was !== now) ezLine("sys", now ? "The painter is at the easel. This console opens when it stops." : "The easel is free."); renderConsole(); }
   if (tab === "replay" && (before.clip !== s.clip || before.state !== s.state)) loadReplay();
   if (before.state !== s.state && ["finishing", "replaying"].includes(before.state)) {
-    if (s.error) alertBox(before.state === "finishing" ? "The painting couldn’t be finished." : "The replay couldn’t be made.", s.error);
-    else setStatus(before.state === "finishing" ? "Finished: the varnished picture is in Canvas → Finished." : "The replay is ready.");
+    // what the daemon made by itself reports on the status line only
+    if (s.error && before.job && before.job.auto) setStatus((before.state === "finishing" ? "The picture wasn’t finished: " : "No replay: ") + s.error.split("\n")[0], true);
+    else if (s.error) alertBox(before.state === "finishing" ? "The painting couldn’t be finished." : "The replay couldn’t be made.", s.error);
+    else setStatus(before.state === "finishing" ? (s.state === "replaying" ? "Finished; now making the replay…" : "Finished: the varnished picture is in Canvas → Finished.") : "The replay is ready.");
     if (before.state === "finishing" && !s.error) { view = "final"; $("#view").value = "final"; if (tab === "canvas") renderCanvas(); }
   }
 };

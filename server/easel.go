@@ -205,6 +205,7 @@ func (d *Daemon) easelBusy(st *studioState) error {
 
 // atEasel runs one command at an open easel for the app.
 func (d *Daemon) atEasel(st *studioState, args []string, input string, wait time.Duration) (string, int, error) {
+	st.yieldAuto() // a hand at the easel comes before a heal
 	st.easelMu.Lock()
 	defer st.easelMu.Unlock()
 	if err := d.easelBusy(st); err != nil {

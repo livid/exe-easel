@@ -32,12 +32,16 @@ type Daemon struct {
 	ix      procIndex
 	last    map[string][]byte // the studio object as last broadcast
 	pollMu  sync.Mutex
+	healAt  time.Time // the last heal pass
+	// HealQuiet: how long a log stays unchanged before its picture and
+	// replay are healed (tests set it to 0)
+	HealQuiet time.Duration
 
 	hub *Hub
 }
 
 func NewDaemon(repo, studios string) *Daemon {
-	d := &Daemon{Repo: repo, Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub()}
+	d := &Daemon{Repo: repo, Studios: studios, studios: map[string]*studioState{}, last: map[string][]byte{}, hub: NewHub(), HealQuiet: 2 * time.Minute}
 	d.Procs = scanProcs
 	d.Launch = d.launchPainter
 	d.Push = d.pushExe
@@ -230,6 +234,7 @@ func (d *Daemon) pollOnce() {
 		}
 	}
 	d.closeIdle()
+	d.heal()
 }
 
 // Kick re-polls at once (after an action) so the stream answers quickly.

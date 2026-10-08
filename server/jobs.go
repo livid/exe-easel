@@ -4,6 +4,8 @@ package main
 // painter, finish the painting, cut its replay, delete it.
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -190,6 +192,7 @@ func (d *Daemon) Start(st *studioState, r StartReq) error {
 	if r.Hours < 0.05 || r.Hours > 48 {
 		return &httpError{400, "hours: 0.05 to 48"}
 	}
+	st.yieldAuto()
 	st.easelMu.Lock()
 	defer st.easelMu.Unlock()
 	if err := d.easelBusy(st); err != nil {
@@ -294,8 +297,10 @@ func (d *Daemon) Stop(st *studioState) error {
 	return nil
 }
 
-// runJob runs a finish or clip for a studio in the background.
-func (d *Daemon) runJob(st *studioState, kind string, work func() error) error {
+// runJob runs a finish or clip for a studio in the background; auto marks
+// one the daemon started by itself (heal.go), which yields to anything
+// asked of the studio.
+func (d *Daemon) runJob(st *studioState, kind string, auto bool, work func(ctx context.Context) error) error {
 	st.easelMu.Lock()
 	if err := d.easelBusy(st); err != nil {
 		st.easelMu.Unlock()
@@ -305,8 +310,11 @@ func (d *Daemon) runJob(st *studioState, kind string, work func() error) error {
 		st.easelMu.Unlock()
 		return &httpError{409, "nothing is painted yet"}
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	st.mu.Lock()
-	st.job = &Job{Kind: kind, Started: time.Now().UnixMilli()}
+	st.job = &Job{Kind: kind, Started: time.Now().UnixMilli(), Auto: auto}
+	st.cancel, st.jobDone = cancel, done
 	st.errMsg = ""
 	own := st.ownEasel
 	st.mu.Unlock()
@@ -320,24 +328,57 @@ func (d *Daemon) runJob(st *studioState, kind string, work func() error) error {
 	st.easelMu.Unlock()
 	d.Kick()
 	go func() {
-		err := work()
+		err := work(ctx)
+		cancelled := ctx.Err() != nil
+		cancel()
 		st.mu.Lock()
-		st.job = nil
-		if err != nil {
+		kind := st.job.Kind // a finish may have turned into its clip
+		st.job, st.cancel, st.jobDone = nil, nil, nil
+		switch {
+		case cancelled:
+			log.Printf("%s %s: cancelled", kind, st.name)
+		case err != nil:
 			st.errMsg = err.Error()
 			log.Printf("%s %s: %v", kind, st.name, err)
 		}
 		st.mu.Unlock()
+		if auto && err != nil && !cancelled {
+			healFailed(st.dir, kind, err)
+		}
+		close(done)
 		d.Kick()
 	}()
 	return nil
 }
 
-func (d *Daemon) script(st *studioState, logName string, name string, args ...string) error {
+// yieldAuto cancels the studio's automatic job, if one runs, and waits for
+// it to end, so what was asked can go ahead. Called with st.mu unlocked.
+func (st *studioState) yieldAuto() {
+	st.mu.Lock()
+	if st.job == nil || !st.job.Auto || st.cancel == nil {
+		st.mu.Unlock()
+		return
+	}
+	cancel, done := st.cancel, st.jobDone
+	st.mu.Unlock()
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+	}
+}
+
+// script runs one of the repo's scripts for a studio, its output kept in
+// out/app/<logName>; cancelling ctx stops it and everything it started
+// (cargo, the replay easel, ffmpeg): it runs in a process group of its own.
+func (d *Daemon) script(ctx context.Context, st *studioState, logName string, name string, args ...string) error {
 	os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
-	cmd := exec.Command(filepath.Join(d.Repo, "scripts", name), args...)
+	cmd := exec.CommandContext(ctx, filepath.Join(d.Repo, "scripts", name), args...)
 	cmd.Dir = d.Repo
 	cmd.Env = d.env("TMPDIR=" + os.TempDir())
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
+	cmd.WaitDelay = 15 * time.Second
 	out, err := cmd.CombinedOutput()
 	os.WriteFile(filepath.Join(st.dir, "out/app", logName), out, 0o644)
 	if err != nil {
@@ -352,15 +393,32 @@ type FinishReq struct {
 	Coats   *float64 `json:"coats"`
 	Cracks  *bool    `json:"cracks"`
 	Relief  bool     `json:"relief"`
+	// Replay, when above 0, films the painting too once it is finished: the
+	// clip's length in seconds, run as the same job's second half (the
+	// studio reads "replaying" from then on), so a finished painting comes
+	// with its movie
+	Replay float64 `json:"replay"`
 }
 
 func (d *Daemon) Finish(st *studioState, r FinishReq) error {
+	st.yieldAuto()
+	args, err := finishArgs(st, r)
+	if err != nil {
+		return err
+	}
+	if r.Replay != 0 && (r.Replay < 5 || r.Replay > 600) {
+		return &httpError{400, "replay: 5 to 600 seconds"}
+	}
+	return d.finish(st, r, args, false)
+}
+
+func finishArgs(st *studioState, r FinishReq) ([]string, error) {
 	args := []string{filepath.Join(st.dir, "paintings/lua/painting.lua"), filepath.Join(st.dir, "out/final.png")}
 	if r.Varnish != nil && !*r.Varnish {
 		args = append(args, "--no-varnish")
 	} else if r.Coats != nil {
 		if *r.Coats <= 0 || *r.Coats > 10 {
-			return &httpError{400, "coats: more than 0, at most 10"}
+			return nil, &httpError{400, "coats: more than 0, at most 10"}
 		}
 		args = append(args, "--coats", fmt.Sprint(*r.Coats))
 	}
@@ -370,12 +428,36 @@ func (d *Daemon) Finish(st *studioState, r FinishReq) error {
 	if r.Relief {
 		args = append(args, "--relief")
 	}
-	return d.runJob(st, "finish", func() error {
+	return args, nil
+}
+
+// finish runs finish_painting (and the clip after it, when r.Replay asks)
+// as a job; the options are kept in out/app/finish.json, so a heal of a
+// picture gone stale finishes it the way it was finished last.
+func (d *Daemon) finish(st *studioState, r FinishReq, args []string, auto bool) error {
+	return d.runJob(st, "finish", auto, func(ctx context.Context) error {
 		tmp := filepath.Join(st.dir, "out/final.png")
-		if err := d.script(st, "finish.log", "finish_painting", args...); err != nil {
+		if err := d.script(ctx, st, "finish.log", "finish_painting", args...); err != nil {
 			return err
 		}
-		return writeJPEG(tmp, filepath.Join(st.dir, "out/final.jpg"), 1600, 88)
+		if !auto {
+			keep := r
+			keep.Replay = 0
+			if b, err := json.Marshal(keep); err == nil {
+				os.WriteFile(filepath.Join(st.dir, "out/app/finish.json"), b, 0o644)
+			}
+		}
+		if err := writeJPEG(tmp, filepath.Join(st.dir, "out/final.jpg"), 1600, 88); err != nil {
+			return err
+		}
+		if r.Replay == 0 {
+			return nil
+		}
+		st.mu.Lock()
+		st.job.Kind, st.job.Started = "clip", time.Now().UnixMilli()
+		st.mu.Unlock()
+		d.Kick()
+		return d.clip(ctx, st, r.Replay)
 	})
 }
 
@@ -391,7 +473,18 @@ func (d *Daemon) Clip(st *studioState, r ClipReq) error {
 	if r.Length < 5 || r.Length > 600 {
 		return &httpError{400, "length: 5 to 600 seconds"}
 	}
-	return d.runJob(st, "clip", func() error {
+	st.yieldAuto()
+	if b, err := json.Marshal(r); err == nil {
+		os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
+		os.WriteFile(filepath.Join(st.dir, "out/app/clip.json"), b, 0o644)
+	}
+	return d.runJob(st, "clip", false, func(ctx context.Context) error { return d.clip(ctx, st, r.Length) })
+}
+
+// clip films the painting being made again: replay_clip into out/replay.mp4.
+func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) error {
+	r := ClipReq{Length: length}
+	{
 		frames := filepath.Join(st.dir, "out/app/frames")
 		os.RemoveAll(frames)
 		os.MkdirAll(filepath.Join(st.dir, "out/app"), 0o755)
@@ -400,20 +493,21 @@ func (d *Daemon) Clip(st *studioState, r ClipReq) error {
 				"--length", fmt.Sprint(length), "--sheet", filepath.Join(st.dir, "out/replay-sheet.jpg"),
 				"--frames-dir", frames}, more...)
 		}
-		err := d.script(st, "clip.log", "replay_clip", args(r.Length)...)
+		err := d.script(ctx, st, "clip.log", "replay_clip", args(r.Length)...)
 		// a short painting can't fill the length asked: the script names the
 		// most it can run, and the frames it replayed are cut again at that
 		if m := clipMaxRe.FindStringSubmatch(errString(err)); m != nil {
 			if most, perr := strconv.ParseFloat(m[1], 64); perr == nil && most > 0 && most < r.Length {
-				err = d.script(st, "clip.log", "replay_clip", args(most, "--reuse")...)
+				err = d.script(ctx, st, "clip.log", "replay_clip", args(most, "--reuse")...)
 			}
 		}
 		return err
-	})
+	}
 }
 
 // Delete moves the studio into .trash.
 func (d *Daemon) Delete(st *studioState) error {
+	st.yieldAuto()
 	st.easelMu.Lock()
 	defer st.easelMu.Unlock()
 	if d.paintingNow(st) {

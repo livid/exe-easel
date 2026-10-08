@@ -19,7 +19,7 @@ A **studio** is a folder `<studios>/<name>` (default `/www/exe-art/studios`) hol
   "name": "haixing-3",
   "title": "Low Tide, Counting",      // from out/claude/reply.txt (see below), else ""
   "state": "painting",                // see States
-  "job": null,                        // or {"kind": "finish"|"clip"|"export", "started": ms, "error": ""}
+  "job": null,                        // or {"kind": "finish"|"clip", "started": ms, "error": "", "auto": false}
   "error": "",                        // the last failed job's or export's words, until the next one starts
   "box": "every",                     // bin/box, else "default"
   "model": "claude-opus-5-5",         // the last run's (runs.log "start model=…"), else ""
@@ -122,7 +122,10 @@ characters or nothing.
   "relief": false}` → the studio (state `finishing`). Runs `scripts/finish_painting
   paintings/lua/painting.lua out/final.png [--coats C] [--no-varnish] [--no-cracks]
   [--relief]`, then writes `out/final.jpg` (1600 px wide, quality 88).
-  409 while painting or with no chunks.
+  `"replay": L` (5..600 seconds; 0 or absent: none) films it as well, as the same
+  job's second half: the job's kind turns to `clip` (state `replaying`) and runs
+  what `POST …/clip` with that length runs. 409 while painting or with no chunks.
+  The options (without `replay`) are kept in `out/app/finish.json` for the heal.
 - `POST /v1/studios/{name}/clip` `{"length": 75}` → the studio (state `replaying`).
   `scripts/replay_clip paintings/lua/painting.lua out/replay.mp4 --length L
   --sheet out/replay-sheet.jpg --frames-dir out/app/frames`. A painting too short
@@ -142,6 +145,27 @@ characters or nothing.
   422 `{"error"}` (the easel's words: a chunk that fails changes nothing). A hand
   at the easel: the chunk is logged like a painter's. 409 while painting.
 - `POST /v1/studios/{name}/close` → 204: closes an easel nobody paints at.
+
+## Self-heal
+
+Nobody has to press anything for a painting's picture or replay (`heal.go`).
+Every 10 s the daemon picks one studio that wants something made, newest log
+first, and starts it as an automatic job (`job.auto: true`; states `finishing`
+and `replaying` as usual): one at a time across the machine, never while a
+painter works, a job runs or the app's own easel is open, and only once
+`paintings/lua/painting.lua` has rested for two minutes.
+
+- `out/final.png` (+ `final.jpg`) is made when the last run in runs.log ended
+  with status 0 and there is none, and made again when the log is newer, with
+  the options of the last finish asked for (`out/app/finish.json`).
+- `out/replay.mp4` is made when there is none or the log is newer, at the
+  length last asked for (`out/app/clip.json`, else 75 s).
+- A start, a `look` or `do`, a finish or clip asked for, or a delete cancels an
+  automatic job first (its process group is stopped) instead of answering 409;
+  a cancelled heal leaves no error and is picked up again later.
+- A failed heal sets the studio's `error` and is recorded in
+  `out/app/heal.json` with the log's stamp; it is not tried again until the
+  log changes.
 
 ## Events (session)
 
