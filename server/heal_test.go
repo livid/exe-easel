@@ -180,6 +180,7 @@ func TestKeptViews(t *testing.T) {
 	if _, opening := m["opening"]; !opening {
 		t.Fatalf("a crop should open the easel: %v", m)
 	}
+	settle(t, st)
 	// a log that moved on leaves the views stale
 	os.WriteFile(logPath, []byte("--@ chunk 1\ncanvas{}\n--@ chunk 2\nprint(1)\n"), 0o644)
 	if viewsFresh(dir) {

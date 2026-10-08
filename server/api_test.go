@@ -83,6 +83,7 @@ func newTestDaemon(t *testing.T) (*Daemon, *httptest.Server, string, *fakeProcs)
 	studios := filepath.Join(root, "studios")
 	os.MkdirAll(studios, 0o755)
 	d := NewDaemon(root, studios)
+	d.NoHeal = true
 	fp := &fakeProcs{}
 	d.Procs = fp.get
 	d.Launch = func(name, studio string, env []string) error { return nil }
@@ -450,4 +451,20 @@ func TestFinalWaitsForTheWebCopy(t *testing.T) {
 	if !d.List()[0].Final {
 		t.Fatal("not finished with both")
 	}
+}
+
+// settle waits for what a test started in the background on a studio (an
+// easel opening, a job) to end, so it can't outlive the test's folders.
+func settle(t *testing.T, st *studioState) {
+	t.Helper()
+	for i := 0; i < 500; i++ {
+		st.mu.Lock()
+		busy := st.opening || st.job != nil
+		st.mu.Unlock()
+		if !busy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("the studio never settled")
 }

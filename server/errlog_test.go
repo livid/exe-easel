@@ -105,4 +105,5 @@ func TestCanvasNowFromTheSave(t *testing.T) {
 		t.Fatalf("a value look: %v", m)
 	}
 	d.state("closed").yieldAuto()
+	settle(t, d.state("closed"))
 }

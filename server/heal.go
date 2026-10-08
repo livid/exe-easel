@@ -134,7 +134,7 @@ func savedClipLength(dir string) float64 {
 // heal starts the one automatic job the studios want most, newest log
 // first; called from the poll loop.
 func (d *Daemon) heal() {
-	if time.Since(d.healAt) < healEvery {
+	if d.NoHeal || time.Since(d.healAt) < healEvery {
 		return
 	}
 	d.healAt = time.Now()

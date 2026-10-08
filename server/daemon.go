@@ -37,6 +37,9 @@ type Daemon struct {
 	// HealQuiet: how long a log stays unchanged before its picture and
 	// replay are healed (tests set it to 0)
 	HealQuiet time.Duration
+	// NoHeal: no automatic jobs (tests: a heal started by the poll an
+	// action kicks would outlive the test that set up its studio)
+	NoHeal bool
 
 	hub *Hub
 
