@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Nine painters, one a chapter of 《九重葛底下的山羊》 (story.md), each in a studio of its own
+# with every tube (export profile "every", from main), run by Claude Code through the
+# exe-easel daemon, so each paints in its own transient unit and shows in the Easel app.
+#
+#   projects/shanyang/run setup        export studios/shanyang-1..9 and write their briefs
+#   projects/shanyang/run start [N…]   start the painters (all nine, or the ones named)
+#   projects/shanyang/run status       each studio's runs.log, chunks and reply
+#   projects/shanyang/run finish [N…]  dry, varnish and crack each painting
+#                                     (engine/scripts/finish_painting) into out/final.png
+#
+# The daemon heals final.png, final.jpg and replay.mp4 by itself once a painter ends;
+# finish is for redoing one by hand. PAINTER_MODEL, PAINTER_EFFORT and PAINTER_HOURS
+# (default 5) go to the daemon's start; EASEL names the daemon (127.0.0.1:7794).
+set -euo pipefail
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+here="$repo/projects/shanyang"
+studios="$repo/studios"
+easel=${EASEL:-http://127.0.0.1:7794}
+export PATH="$HOME/.cargo/bin:$PATH"
+
+which_ones() { if [ $# -gt 0 ]; then echo "$@"; else seq 1 9; fi; }
+
+case "${1:-}" in
+setup)
+  mkdir -p "$studios"
+  for n in $(seq 1 9); do
+    s="$studios/shanyang-$n"
+    [ -e "$s" ] && { echo "$s is there already" >&2; continue; }
+    R16_BRANCH=HEAD TMPDIR="${TMPDIR:-/tmp}" "$repo/engine/scripts/export_r16_studio" every "$s" | tail -1
+    sed "s/{{N}}/$n/g" "$here/BRIEF.md.in" > "$s/BRIEF.md"
+    cp "$here/story.md" "$s/notes/story.md"
+    python3 -I - "$here/story.md" "$n" > "$s/notes/chapter.md" <<'EOF'
+import sys
+story, n = sys.argv[1], int(sys.argv[2])
+body = open(story, encoding="utf-8").read().split("\n[^1]:", 1)[0]
+print(f"# 第{['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'][n - 1]}章\n")
+print([p.strip() for p in body.split("\n---\n")][n - 1])
+EOF
+  done ;;
+start)
+  shift
+  for n in $(which_ones "$@"); do
+    body=$(printf '{"model": "%s", "effort": "%s", "hours": %s}' \
+      "${PAINTER_MODEL:-claude-opus-5-5}" "${PAINTER_EFFORT:-high}" "${PAINTER_HOURS:-5}")
+    curl -sf -X POST -H 'Content-Type: application/json' -d "$body" \
+      "$easel/v1/studios/shanyang-$n/start" > /dev/null
+    echo "started shanyang-$n"
+  done ;;
+status)
+  for n in $(seq 1 9); do
+    s="$studios/shanyang-$n"
+    [ -d "$s" ] || continue
+    chunks=$(grep -c '^--@ chunk' "$s/paintings/lua/painting.lua" 2>/dev/null || true)
+    looks=$(grep -c '"name":"mcp__easel__look"' "$s/out/claude/session.jsonl" 2>/dev/null || true)
+    echo "shanyang-$n: ${chunks:-0} chunks, ${looks:-0} looks · $(tail -1 "$s/out/claude/runs.log" 2>/dev/null)"
+    if [ -s "$s/out/claude/reply.txt" ]; then sed 's/^/    /' "$s/out/claude/reply.txt" | head -12; fi
+  done ;;
+finish)
+  shift
+  for n in $(which_ones "$@"); do
+    s="$studios/shanyang-$n"
+    "$repo/engine/scripts/finish_painting" "$s/paintings/lua/painting.lua" "$s/out/final.png"
+  done ;;
+*) sed -n '2,14p' "$0" >&2; exit 2 ;;
+esac
