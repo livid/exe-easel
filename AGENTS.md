@@ -11,6 +11,7 @@ README.md says what the repository is; this says how to work in it.
 | `apps/easel/` | the Easel app; exe serves it from `apps_dirs` and relays `/v1/svc/easel/` to the daemon |
 | `projects/haixing/` | six painters for the chapters of a short story (`run setup|start|status|finish`) |
 | `projects/modouji/` | ten painters for the chapters of its sequel, started through the daemon (same commands) |
+| `projects/shanyang/` | nine painters for the third story, 《九重葛底下的山羊》 (same commands) |
 | `studios/`, `logs/` | runtime, ignored by Git |
 
 ## When something in Easel goes wrong
