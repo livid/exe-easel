@@ -1258,6 +1258,7 @@ function loadReplay() {
       : s.state === "finishing" ? "Varnishing first; the replay comes next."
       : !s.chunks ? "Nothing to replay yet."
       : s.error ? "No replay: " + s.error.split("\n")[0]
+      : s.short ? "Too little is painted yet to make a replay."
       : "The replay is on its way: it is made a couple of minutes after the painting last changed.";
     return;
   }

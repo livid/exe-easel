@@ -34,6 +34,7 @@ A **studio** is a folder `<studios>/<name>` (default `/www/exe-easel/studios`) h
   "latest": "out/easel/painting/3f1e….png", // the newest whole-canvas look (see Latest), else ""
   "final": true,                      // out/final.png and out/final.jpg (its 1600 px web copy, written after it) both exist
   "clip": false,                      // out/replay.mp4 exists
+  "short": false,                     // no replay: the heal found too little painted in this log to film
   "created": 1791449536000,           // BRIEF.md's mtime
   "updated": 1791450000000,           // newest mtime of session.jsonl, painting.lua, notes/journal.md, runs.log, out/final.png, out/final.jpg, out/replay.mp4
   "started": 1791449537000,           // the last run's start (runs.log), else null
@@ -125,8 +126,11 @@ trimmed; "" when that leaves more than 120 characters or nothing.
   taken; `setsid` when systemd-run fails). `CLAUDE` and `NODE` name the binaries. A studio
   whose session stopped resumes it (`paint` does that by itself from
   `out/claude/session_id`). 409 while painting or a job runs.
-- `POST /v1/studios/{name}/stop` → the studio (state `stopping`): SIGINT to the
-  studio's `claude` process; `paint` then writes the reply and closes the easel.
+- `POST /v1/studios/{name}/stop` → the studio (state `stopping`): writes
+  `<time> stop` to `out/claude/runs.log`, then SIGINT to the studio's `claude`
+  process; `paint` then writes the reply, closes the easel and logs its `end`.
+  Claude interrupted exits 0, so the stop line is what tells the heal the
+  painter didn't end by itself.
 - `POST /v1/studios/{name}/finish` `{"varnish": true, "coats": 0.4, "cracks": true,
   "relief": false}` → the studio (state `finishing`). Runs `engine/scripts/finish_painting
   paintings/lua/painting.lua out/final.png [--coats C] [--no-varnish] [--no-cracks]
@@ -139,7 +143,9 @@ trimmed; "" when that leaves more than 120 characters or nothing.
   `engine/scripts/replay_clip paintings/lua/painting.lua out/replay.mp4 --length L
   --sheet out/replay-sheet.jpg --frames-dir out/app/frames`. A painting too short
   for L (the script names the most it can run) is cut again at that length from
-  the same frames (`--reuse`). 409 while painting or with no chunks. A failed
+  the same frames (`--reuse`); one too short for even that (a ground, a stroke:
+  nothing before the 3 s final hold) fails with "too little is painted yet to
+  make a replay". 409 while painting or with no chunks. A failed
   job's words land in the studio's `error`; the scripts' output is in
   `out/app/finish.log` / `clip.log`.
 - `POST /v1/studios/{name}/look` `{"mode", "crop", "size", "light", "grid", "palette",
@@ -174,7 +180,9 @@ job (state `drawing`, always automatic: heal.go) takes them with the studio's
 own easel: it opens a closed easel (one replay of the log, the progress read
 from its `server.log`), looks in every mode and at the palette, keeps the
 looks, and closes the easel again if it opened it; cancelled while the easel
-is open, it leaves it open for whoever asked. A look that is one of them whole
+is open, it leaves it open for whoever asked. A board with no piles on it is
+kept as the easel's words (`palette.txt`, in place of `palette.png`), and a
+palette look then answers them as the easel would, a 422. A look that is one of them whole
 (no crop, size, light, grid, scratch or survey) is answered from them while the
 stamp matches the log. When it doesn't and the easel is closed, the look
 answers `{"opening": "Drawing the views: replaying chunk 12 of 55…"}`, waiting
@@ -212,7 +220,8 @@ across the machine (default: a sixth of the cores, at least one; each is a
 replay of the whole log on a core or two).
 
 - `out/final.png` (+ `final.jpg`) is made when the last run in runs.log ended
-  with status 0 and there is none, and made again when the log is newer, with
+  with status 0 and no `stop` line (the painter ended by itself, or at its time
+  limit) and there is none, and made again when the log is newer, with
   the options of the last finish asked for (`out/app/finish.json`).
 - `out/app/views/` (above) are drawn when missing or older than the log.
   When the replay is wanted too, it is filmed beside them in the same job
@@ -226,7 +235,8 @@ replay of the whole log on a core or two).
   a cancelled heal leaves no error and is picked up again later.
 - A failed heal sets the studio's `error` and is recorded in
   `out/app/heal.json` with the log's stamp; it is not tried again until the
-  log changes.
+  log changes. A clip with too little to film is recorded the same way but is
+  no error: the studio reads `short` instead.
 
 ## Events (session)
 

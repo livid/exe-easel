@@ -312,13 +312,20 @@ func (d *Daemon) Stop(st *studioState) error {
 			pid = p
 		}
 	}
-	switch {
-	case pid > 0:
-		syscall.Kill(pid, syscall.SIGINT)
-	case tpid > 0:
-		syscall.Kill(tpid, syscall.SIGINT)
-	default:
+	if pid <= 0 && tpid <= 0 {
 		return &httpError{409, "the painter's claude wasn't found"}
+	}
+	// said in runs.log before the signal, ahead of paint's "end": claude
+	// interrupted exits 0, and the heal must not take a stop for the
+	// painter's own end and varnish a painting meant to be resumed
+	if f, err := os.OpenFile(filepath.Join(st.dir, "out/claude/runs.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		fmt.Fprintf(f, "%s stop\n", time.Now().UTC().Format("2006-01-02T15:04:05Z"))
+		f.Close()
+	}
+	if pid > 0 {
+		syscall.Kill(pid, syscall.SIGINT)
+	} else {
+		syscall.Kill(tpid, syscall.SIGINT)
 	}
 	st.mu.Lock()
 	st.stopping = true
@@ -365,13 +372,17 @@ func (d *Daemon) runJob(st *studioState, kind string, auto bool, work func(ctx c
 		kind := st.job.Kind // a finish may have turned into its clip, views into theirs
 		st.job, st.cancel, st.jobDone = nil, nil, nil
 		failed := err != nil && !cancelled
-		if failed {
+		short := failed && auto && errors.Is(err, errTooShort)
+		if failed && !short {
 			st.errMsg = err.Error()
 		}
 		st.mu.Unlock()
 		switch {
 		case cancelled:
 			log.Printf("%s %s: cancelled", kind, st.name)
+		case short:
+			log.Printf("%s %s: %v", kind, st.name, err)
+			healFailed(st.dir, kind, err)
 		case failed:
 			d.jobFailed(st, kind, auto, err)
 		}
@@ -549,6 +560,11 @@ func (d *Daemon) clip(ctx context.Context, st *studioState, length float64) erro
 				err = d.script(ctx, st, "clip.log", "replay_clip", args(most, "--reuse")...)
 			}
 		}
+		// and one shorter still (a ground, a stroke) has nothing to show
+		// before the finished picture's hold
+		if clipHoldRe.MatchString(errString(err)) {
+			return errTooShort
+		}
 		return err
 	}
 }
@@ -604,6 +620,14 @@ func (d *Daemon) PutBrief(st *studioState, text string) error {
 var killedRe = regexp.MustCompile(`(?m)^signal: (terminated|killed|interrupt)$`)
 
 var clipMaxRe = regexp.MustCompile(`come to at most ([0-9.]+) s`)
+
+var clipHoldRe = regexp.MustCompile(`--length must exceed the [0-9.]+ s final hold`)
+
+// errTooShort: a painting with too little in its log to film. Not a
+// failure: an automatic clip that meets it is recorded in heal.json (no
+// error, nothing in the error log), and the studio reads "short" until the
+// log grows.
+var errTooShort = errors.New("too little is painted yet to make a replay")
 
 func errString(err error) string {
 	if err == nil {

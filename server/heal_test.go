@@ -3,8 +3,12 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -55,6 +59,20 @@ func TestHealNeed(t *testing.T) {
 		os.WriteFile(filepath.Join(dir, "out/claude/runs.log"), []byte("x start\nx end status=130\n"), 0o644)
 		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
 			t.Fatalf("got %q, want views", got)
+		}
+	})
+	t.Run("a painter the daemon stopped exits 0: no varnish", func(t *testing.T) {
+		dir := healStudio(t)
+		os.WriteFile(filepath.Join(dir, "out/claude/runs.log"), []byte("x start\nx stop\nx end status=0\n"), 0o644)
+		if got := healNeed(dir, 2*time.Minute, now); got != "views" {
+			t.Fatalf("got %q, want views", got)
+		}
+		// resumed, and this time it ended by itself
+		f, _ := os.OpenFile(filepath.Join(dir, "out/claude/runs.log"), os.O_APPEND|os.O_WRONLY, 0o644)
+		f.WriteString("x start model=m --resume s\nx end status=0\n")
+		f.Close()
+		if got := healNeed(dir, 2*time.Minute, now); got != "finish" {
+			t.Fatalf("resumed and ended: got %q, want finish", got)
 		}
 	})
 	t.Run("the log moved on past both", func(t *testing.T) {
@@ -462,4 +480,133 @@ func TestViewsFailClipFilms(t *testing.T) {
 	if need := healNeed(st.dir, 0, time.Now()); need != "" {
 		t.Fatalf("still wants %q after the views failed on this log and the clip was made", need)
 	}
+}
+
+// Stop says so in runs.log before it signals claude, so the heal doesn't
+// varnish a painting stopped to be resumed (claude interrupted exits 0).
+func TestStopIsInRunsLog(t *testing.T) {
+	d, srv, studios, fp := newTestDaemon(t)
+	dir := healStudio(t)
+	os.Rename(dir, filepath.Join(studios, "p"))
+	dir = filepath.Join(studios, "p")
+	runs := filepath.Join(dir, "out/claude/runs.log")
+	os.WriteFile(runs, []byte("2026-10-09T14:50:26Z start model=m effort=high hours=5 \n"), 0o644)
+	claude := exec.Command("sleep", "30") // stands in for claude: the SIGINT lands here
+	if err := claude.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { claude.Process.Kill() })
+	fp.set(Proc{PID: 10, Comm: "bash", Argv: []string{"bash", "/x/harness/claude/paint", dir}, Cwd: dir},
+		Proc{PID: claude.Process.Pid, Comm: "claude", Argv: []string{"claude", "-p"}, Cwd: dir})
+	d.state("p")
+	if code, m := call(t, "POST", srv.URL+"/v1/studios/p/stop", nil); code != 200 {
+		t.Fatalf("stop: %d %v", code, m)
+	}
+	if err := claude.Wait(); err == nil || !strings.Contains(err.Error(), "interrupt") {
+		t.Fatalf("claude: %v, want interrupted", err)
+	}
+	b, _ := os.ReadFile(runs)
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 || !regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ stop$`).MatchString(lines[1]) {
+		t.Fatalf("runs.log %q", lines)
+	}
+	// paint's end, as claude interrupted leaves it
+	f, _ := os.OpenFile(runs, os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString("2026-10-09T14:51:03Z end status=0\n")
+	f.Close()
+	fp.set()
+	if lastRunClean(dir) || slices.Contains(healNeeds(dir, 0, time.Now()), "finish") {
+		t.Fatal("a stopped painter's painting is to be varnished")
+	}
+	if ri := readRuns(runs); ri.ended == nil || ri.exit == nil || *ri.exit != 0 {
+		t.Fatalf("runs: %+v", ri)
+	}
+}
+
+// A painting too short to film is no failure of the heal: it is recorded
+// against the log (not tried again until it changes), the studio reads
+// short, and nothing goes to the error log or the studio's error.
+func TestTooShortToFilm(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	healScripts(t, d)
+	os.WriteFile(filepath.Join(d.Engine, "scripts", "replay_clip"), []byte(`#!/bin/sh
+for a; do [ "$a" = --reuse ] && { echo "replay_clip: --length must exceed the 3 s final hold" >&2; exit 1; }; done
+echo "replay_clip: --length 75 is longer than the clip can run: 0 moments held at most 4 s each (--max-hold) plus the 3 s final hold come to at most 3.00 s; " >&2
+exit 1
+`), 0o755)
+	st := healReady(t, d, studios, "t")
+	touch(t, filepath.Join(st.dir, "out/final.png"), time.Now())
+	if err := d.startHeal(st, []string{"clip"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the clip to end", func() bool { return jobOf(st) == "" })
+	st.mu.Lock()
+	msg := st.errMsg
+	st.mu.Unlock()
+	if logged := d.Errors.Tail(10); msg != "" || len(logged) != 0 {
+		t.Fatalf("error %q, error log %s", msg, logged)
+	}
+	if readHeal(st.dir)["clip"].Error != errTooShort.Error() || slices.Contains(healNeeds(st.dir, 0, time.Now()), "clip") {
+		t.Fatalf("heal.json %v", readHeal(st.dir))
+	}
+	if o := d.object(st); !o.Short || o.Error != "" {
+		t.Fatalf("studio short %v error %q", o.Short, o.Error)
+	}
+	// asked for by hand, the words are the studio's error
+	if err := d.runJob(st, "clip", false, func(ctx context.Context) error { return d.clip(ctx, st, 75) }); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the asked clip to end", func() bool { return jobOf(st) == "" })
+	if o := d.object(st); o.Error != errTooShort.Error() {
+		t.Fatalf("asked: error %q", o.Error)
+	}
+}
+
+// A board with no piles is a view like the others: the views are kept, and
+// a palette look answers the easel's words as the easel would.
+func TestViewsOfABarePalette(t *testing.T) {
+	d, srv, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "b")
+	os.WriteFile(filepath.Join(dir, "paintings/lua/painting.lua"), []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "bin/easel"), []byte(strings.Replace(stubEasel, "look) ",
+		`look) case "$*" in *--palette*) echo "look --palette: no piles on the palette yet" >&2; exit 1 ;; esac; `, 1)), 0o755)
+	st := d.state("b")
+	if err := d.renderViews(context.Background(), st); err != nil {
+		t.Fatal(err)
+	}
+	if !viewsFresh(dir) || healNeed(dir, 0, time.Now().Add(time.Hour)) == "views" {
+		t.Fatal("the views of a bare palette aren't kept")
+	}
+	opens := countLines(filepath.Join(dir, "opens.log")) // the views job's own
+	code, m := easelCall(t, srv.URL+"/v1/studios/b/look", map[string]any{"palette": true})
+	if code != 422 || !strings.Contains(fmt.Sprint(m["error"]), "no piles on the palette") {
+		t.Fatalf("palette look: %d %v", code, m)
+	}
+	if code, m = easelCall(t, srv.URL+"/v1/studios/b/look", map[string]any{"mode": "value"}); code != 200 || m["w"] == nil {
+		t.Fatalf("value look: %d %v", code, m)
+	}
+	if countLines(filepath.Join(dir, "opens.log")) != opens {
+		t.Fatal("a kept view opened the easel")
+	}
+}
+
+// Views that fail leave no views.new behind.
+func TestFailedViewsLeaveNothing(t *testing.T) {
+	d, _, studios, _ := newTestDaemon(t)
+	dir := makeStudio(t, studios, "n")
+	os.WriteFile(filepath.Join(dir, "paintings/lua/painting.lua"), []byte("--@ chunk 1\ncanvas{}\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "bin/easel"), []byte(strings.Replace(stubEasel, "look) ",
+		`look) case "$*" in *relief*) echo "relief: boom" >&2; exit 1 ;; esac; `, 1)), 0o755)
+	st := d.state("n")
+	if err := d.renderViews(context.Background(), st); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err %v", err)
+	}
+	if exists(viewsNewDir(st)) {
+		t.Fatal("views.new left behind")
+	}
+}
+
+func countLines(path string) int {
+	b, _ := os.ReadFile(path)
+	return strings.Count(string(b), "\n")
 }

@@ -14,7 +14,7 @@ package main
 // cancels an automatic job (yieldAuto); the next pass picks it up again.
 //
 //   - The finished picture is made when the painter ended by itself (the
-//     last run in runs.log ended with status 0) and there is none, and made
+//     last run in runs.log ended with status 0, not stopped) and there is none, and made
 //     again when the log has moved on past it, with the options it was last
 //     finished with (out/app/finish.json).
 //   - The replay is made when there is none, or the log has moved on past
@@ -72,21 +72,35 @@ func healFailed(dir, kind string, err error) {
 	}
 }
 
-// lastRunClean: the last line of runs.log is a run that ended with status 0.
+// lastRunClean: the last run in runs.log ended by itself with status 0. A
+// run the daemon's Stop ended has a "stop" line before its end (Stop writes
+// it): claude interrupted exits 0 too, and a painting stopped to be resumed
+// later isn't finished. The time limit (paint's own watchdog) writes none:
+// at the limit the log is the painting.
 func lastRunClean(dir string) bool {
 	f, err := os.Open(filepath.Join(dir, "out/claude/runs.log"))
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	last := ""
+	clean, stopped := false, false
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
-		if t := strings.TrimSpace(sc.Text()); t != "" {
-			last = t
+		ln := strings.TrimSpace(sc.Text())
+		w := strings.Fields(ln)
+		if len(w) < 2 {
+			continue
+		}
+		switch w[1] {
+		case "start":
+			clean, stopped = false, false
+		case "stop":
+			stopped = true
+		case "end":
+			clean = !stopped && strings.Contains(ln, " end status=0")
 		}
 	}
-	return strings.Contains(last, " end status=0")
+	return clean
 }
 
 // healNeed says what the studio in dir wants made first: "finish",

@@ -290,8 +290,8 @@ func (d *Daemon) atEasel(st *studioState, args []string, input string, wait time
 }
 
 func (d *Daemon) Look(st *studioState, r LookReq) (*LookResult, error) {
-	if res := d.keptView(st, r); res != nil {
-		return res, nil
+	if res, err := d.keptView(st, r); res != nil || err != nil {
+		return res, err
 	}
 	if res := d.savedCanvas(st, r); res != nil {
 		return res, nil

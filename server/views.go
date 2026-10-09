@@ -10,15 +10,6 @@ package main
 // the palette, keeps them, and closes it again. The engine stays as upstream
 // publishes it.
 
-// The views: the finished canvas as each of `look`'s modes shows it, and the
-// palette board, kept in out/app/views/ with the stamp of the log they were
-// drawn from. A view asked for on a closed easel would otherwise wait for an
-// open, which replays the whole log (the save holds the canvas and the
-// piles, not the board); with the views kept, the app's View menu answers at
-// once. They come from `easel run --views` (crates/easel), as part of the
-// replay a clip makes anyway, or as a heal of their own (heal.go) for a
-// painting whose views are missing or older than its log.
-
 import (
 	"context"
 	"errors"
@@ -28,12 +19,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
 )
 
-// viewFiles: the files `easel run --views` writes, by the app's name for each view.
+// viewFiles: the files the views job keeps, by the app's name for each view.
 var viewFiles = map[string]string{
 	"":        "normal.png",
 	"normal":  "normal.png",
@@ -47,6 +39,12 @@ var viewFiles = map[string]string{
 
 const viewsStamp = "log.stamp"
 
+// paletteNone stands in for palette.png when the board has no piles: the
+// easel's own words, answered as the easel would answer them (a 422).
+const paletteNone = "palette.txt"
+
+var noPilesRe = regexp.MustCompile(`no piles on the palette`)
+
 func viewsDir(st *studioState) string    { return filepath.Join(st.dir, "out/app/views") }
 func viewsNewDir(st *studioState) string { return filepath.Join(st.dir, "out/app/views.new") }
 func logStamp(dir string) string {
@@ -54,17 +52,23 @@ func logStamp(dir string) string {
 	return s
 }
 
+// hasPalette: a views folder holds the palette, or the words for a board
+// with nothing on it.
+func hasPalette(dir string) bool {
+	return exists(filepath.Join(dir, "palette.png")) || exists(filepath.Join(dir, paletteNone))
+}
+
 // viewsFresh: the kept views were drawn from the log as it is now.
 func viewsFresh(dir string) bool {
 	b, err := os.ReadFile(filepath.Join(dir, "out/app/views", viewsStamp))
-	return err == nil && strings.TrimSpace(string(b)) == logStamp(dir) && exists(filepath.Join(dir, "out/app/views/palette.png"))
+	return err == nil && strings.TrimSpace(string(b)) == logStamp(dir) && hasPalette(filepath.Join(dir, "out/app/views"))
 }
 
 // keepViews moves a finished views.new into place, stamped with the log it
 // was drawn from (taken before the replay began).
 func keepViews(st *studioState, stamp string) error {
 	nd := viewsNewDir(st)
-	if !exists(filepath.Join(nd, "palette.png")) {
+	if !hasPalette(nd) {
 		return errors.New("the replay drew no views")
 	}
 	os.Remove(filepath.Join(nd, "final.png"))
@@ -94,13 +98,19 @@ var viewLooks = []struct {
 // at, and closed again if this job opened it. A job cancelled while the
 // easel is open leaves it open for whoever asked (the daemon's, closed when
 // idle), since that is what they came for.
-func (d *Daemon) renderViews(ctx context.Context, st *studioState) error {
+func (d *Daemon) renderViews(ctx context.Context, st *studioState) (err error) {
 	stamp := logStamp(st.dir)
 	nd := viewsNewDir(st)
 	os.RemoveAll(nd)
 	if err := os.MkdirAll(nd, 0o755); err != nil {
 		return err
 	}
+	// views half drawn are no use to anyone
+	defer func() {
+		if err != nil {
+			os.RemoveAll(nd)
+		}
+	}()
 	opened := false
 	if _, code := easelRunCtx(ctx, st.dir, []string{"status"}, 20*time.Second); code != 0 {
 		if ctx.Err() != nil {
@@ -135,6 +145,13 @@ func (d *Daemon) renderViews(ctx context.Context, st *studioState) error {
 			if m := pngRe.FindStringSubmatch(strings.TrimSpace(ln)); m != nil {
 				src = m[1]
 			}
+		}
+		// a painting with nothing mixed has a bare board: that is its view
+		if v.file == "palette.png" && code != 0 && noPilesRe.MatchString(out) {
+			if err := os.WriteFile(filepath.Join(nd, paletteNone), []byte(strings.TrimSpace(out)+"\n"), 0o644); err != nil {
+				return err
+			}
+			continue
 		}
 		if code != 0 || src == "" {
 			return fmt.Errorf("the easel's %s: %s", strings.Join(v.args, " "), lastLines(out, 4))
@@ -222,41 +239,47 @@ func (d *Daemon) viewsComing(st *studioState) string {
 
 // keptView answers a look from the kept views when they are of the log as
 // it is and the look is one of them whole: no crop, size, light, grid,
-// scratch or survey. nil otherwise.
-func (d *Daemon) keptView(st *studioState, r LookReq) *LookResult {
+// scratch or survey; a bare board's palette is the easel's 422. nil, nil
+// otherwise.
+func (d *Daemon) keptView(st *studioState, r LookReq) (*LookResult, error) {
 	if r.Crop != "" || r.Size != 0 || r.Light != "" || r.Grid != nil || r.Scratch || r.Survey {
-		return nil
+		return nil, nil
 	}
 	name := r.Mode
 	if r.Palette {
 		if name != "" {
-			return nil
+			return nil, nil
 		}
 		name = "palette"
 	}
 	file, ok := viewFiles[strings.TrimSpace(name)]
 	if !ok || !viewsFresh(st.dir) {
-		return nil
+		return nil, nil
+	}
+	if file == "palette.png" {
+		if b, err := os.ReadFile(filepath.Join(viewsDir(st), paletteNone)); err == nil {
+			return nil, &httpError{422, strings.TrimSpace(string(b))}
+		}
 	}
 	src := filepath.Join(viewsDir(st), file)
 	f, err := os.Open(src)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	cfg, _, err := image.DecodeConfig(f)
 	f.Close()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	b, err := os.ReadFile(src)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	rel := "out/app/looks/" + newID() + ".png"
 	os.MkdirAll(filepath.Join(st.dir, "out/app/looks"), 0o755)
 	if os.WriteFile(filepath.Join(st.dir, rel), b, 0o644) != nil {
-		return nil
+		return nil, nil
 	}
 	return &LookResult{Said: rel + fmt.Sprintf(" (%dx%d)", cfg.Width, cfg.Height) + "\n(drawn from the finished painting's replay)",
-		Images: []string{rel}, W: cfg.Width, H: cfg.Height}
+		Images: []string{rel}, W: cfg.Width, H: cfg.Height}, nil
 }

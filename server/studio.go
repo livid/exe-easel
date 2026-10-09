@@ -42,6 +42,7 @@ type Studio struct {
 	Latest  string  `json:"latest"`
 	Final   bool    `json:"final"`
 	Clip    bool    `json:"clip"`
+	Short   bool    `json:"short"`
 	Created int64   `json:"created"`
 	Updated int64   `json:"updated"`
 	Started *int64  `json:"started"`
@@ -297,6 +298,12 @@ func (st *studioState) compute(painting bool) Studio {
 	_, jpg := bump(filepath.Join(dir, "out/final.jpg"))
 	o.Final = png && jpg
 	_, o.Clip = bump(filepath.Join(dir, "out/replay.mp4"))
+	// too little painted to film, as the last automatic clip found this log
+	if !o.Clip && st.logStamp != "" {
+		if f := readHeal(dir)["clip"]; f.Log == st.logStamp && f.Error == errTooShort.Error() {
+			o.Short = true
+		}
+	}
 	replyPath := filepath.Join(dir, "out/claude/reply.txt")
 	if stamp, _, ok := stampOf(replyPath); ok {
 		if stamp != st.replyStamp {
