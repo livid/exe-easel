@@ -167,10 +167,13 @@ func TestTitleFrom(t *testing.T) {
 		"":                                                            "",
 		strings.Repeat("long ", 40):                                   "",
 		"**\"Two Weeks\"** — painted over a day":                      "\"Two Weeks\" — painted over a day",
-		"**《冰箱的光》 (In the Light of the Refrigerator)**\n\nA night kitchen.":                              "冰箱的光",
-		"I've finished the painting for chapter 5. It's called 《手指画的星》, \"The Star Drawn by a Finger\".": "手指画的星",
-		"**「石下的眼睛」(The Eye Under the Stone)**":                                                           "石下的眼睛",
-		"负潮 · Minus Tide\n\nThe cliff is called 《not this》 later.":                                       "负潮 · Minus Tide",
+		"**《冰箱的光》 (In the Light of the Refrigerator)**\n\nA night kitchen.":                               "冰箱的光",
+		"I've finished the painting for chapter 5. It's called 《手指画的星》, \"The Star Drawn by a Finger\".":  "手指画的星",
+		"**「石下的眼睛」(The Eye Under the Stone)**":                                                            "石下的眼睛",
+		"负潮 · Minus Tide\n\nThe cliff is called 《not this》 later.":                                        "负潮 · Minus Tide",
+		"I've finished the picture for chapter 3.\n\n**《开工之前》 / Before the First Stroke**\n\nIt's early.": "开工之前",
+		"The painting is done.\n\n**Monday, Page Eleven**\n\nIt's Monday morning.":                        "Monday, Page Eleven",
+		"Minus Tide\n\n**The rock shelf** is bare.":                                                       "Minus Tide",
 	}
 	for in, want := range cases {
 		if got := titleFrom(in); got != want {

@@ -191,21 +191,30 @@ var (
 // brackets Chinese and Japanese give titles: 《冰箱的光》, 「石下的眼睛」.
 var workNameRe = regexp.MustCompile(`《([^《》\n]{1,60})》|「([^「」\n]{1,60})」`)
 
+// titleLineRe: a paragraph that is a name on a line of its own, set in
+// bold or as a heading.
+var titleLineRe = regexp.MustCompile(`^(\*\*[^\n]+\*\*|__[^\n]+__|#+ [^\n]+)$`)
+
 // titleFrom: the name the painter gave its picture (API.md, Title). A name
 // in 《》 or 「」 in the first paragraph wins: a painter that answers "It's
 // called 《手指画的星》" in a sentence, or puts an English gloss after it,
 // still gets the name alone. Otherwise the first non-empty line, cleaned.
+// A first paragraph that only says the work is done ("I've finished the
+// picture for chapter 3."), with a bold or heading line after it, gives way
+// to that line.
 func titleFrom(reply string) string {
-	first := strings.TrimSpace(reply)
-	if i := strings.Index(first, "\n\n"); i >= 0 {
-		first = first[:i]
+	paras := strings.SplitN(strings.TrimSpace(reply), "\n\n", 3)
+	first := strings.TrimSpace(paras[0])
+	if len(paras) > 1 && !workNameRe.MatchString(first) && !titleLineRe.MatchString(first) &&
+		titleLineRe.MatchString(strings.TrimSpace(paras[1])) {
+		first = strings.TrimSpace(paras[1])
 	}
 	if m := workNameRe.FindStringSubmatch(first); m != nil {
 		if name := strings.TrimSpace(m[1] + m[2]); name != "" {
 			return name
 		}
 	}
-	for _, ln := range strings.Split(reply, "\n") {
+	for _, ln := range strings.Split(first, "\n") {
 		t := strings.TrimSpace(ln)
 		if t == "" {
 			continue
